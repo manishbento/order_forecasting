@@ -1,0 +1,10 @@
+# This directory stores local DuckDB databases
+# Including:
+# - shrink_data.db (main forecast data)
+# - weather.db (VisualCrossing weather data)
+# - accuweather.db (AccuWeather data)
+# - fabric_token.txt (cached auth token)
+
+*.db
+*.db.wal
+fabric_token.txt

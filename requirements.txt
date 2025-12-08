@@ -1,0 +1,27 @@
+# Costco Order Forecasting v6 - Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core Data Processing
+duckdb>=0.9.0
+polars>=0.20.0
+pandas>=2.0.0
+numpy>=1.24.0
+pyarrow>=14.0.0
+
+# Azure/Fabric Connectivity
+pyodbc>=5.0.0
+azure-identity>=1.15.0
+sqlalchemy>=2.0.0
+
+# Excel Operations
+openpyxl>=3.1.0
+xlsxwriter>=3.1.0
+
+# API Requests (Weather)
+requests>=2.31.0
+
+# Progress Display
+tqdm>=4.66.0
+
+# Development/Testing
+python-dotenv>=1.0.0
