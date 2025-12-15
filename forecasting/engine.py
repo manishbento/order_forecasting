@@ -143,6 +143,12 @@ def calculate_base_forecast(row: dict, weights: Tuple[float, float, float, float
     This is the core calculation that determines the initial forecast
     before adjustments and rounding are applied.
     
+    Also tracks the baseline source for waterfall analysis:
+    - 'lw_sales': Last week sales was used (LW >= EMA)
+    - 'ema': EMA was used because LW sales < EMA (uplift applied)
+    - 'average': Average was used (no LW shipments)
+    - 'minimum_case': Minimum 1 case was used (no recent sales)
+    
     Args:
         row: Dictionary containing item-store data with weekly sales
         weights: Tuple of EMA weights (W1, W2, W3, W4)
@@ -154,6 +160,10 @@ def calculate_base_forecast(row: dict, weights: Tuple[float, float, float, float
         - ema
         - sales_volatility
         - forecast_average (initial base forecast)
+        - baseline_source (source of baseline value)
+        - baseline_qty (the baseline value)
+        - ema_uplift_applied (1 if EMA uplift was used)
+        - ema_uplift_qty (amount of EMA uplift)
     """
     # Extract and clean weekly sales data
     w4_sold = row.get('w4_sold', 0) or 0
@@ -173,18 +183,60 @@ def calculate_base_forecast(row: dict, weights: Tuple[float, float, float, float
     row['ema'] = ema
     row['sales_volatility'] = sales_volatility
     
+    # Initialize baseline tracking fields
+    row['baseline_source'] = 'lw_sales'
+    row['baseline_qty'] = w1_sold
+    row['baseline_adj_qty'] = 0.0
+    row['ema_uplift_applied'] = 0
+    row['ema_uplift_qty'] = 0.0
+    
     # Determine base forecast (max of recent week and EMA)
     # This prevents over-correction when recent sales are strong
-    row['forecast_average'] = max(w1_sold, ema)
+    if w1_sold >= ema:
+        # LW sales is on track or above trend - use LW sales
+        row['forecast_average'] = w1_sold
+        row['baseline_source'] = 'lw_sales'
+        row['baseline_qty'] = w1_sold
+        row['ema_uplift_applied'] = 0
+        row['ema_uplift_qty'] = 0.0
+    else:
+        # LW sales below trend - uplift to EMA
+        row['forecast_average'] = ema
+        row['baseline_source'] = 'ema'
+        row['baseline_qty'] = ema
+        row['ema_uplift_applied'] = 1
+        row['ema_uplift_qty'] = ema - w1_sold  # Positive value showing uplift amount
     
     # Special case: if no shipments last week, use average/EMA
     if row.get('w1_shipped') is None or row.get('w1_shipped') == 0:
-        row['forecast_average'] = max(average_sold, ema)
+        if average_sold >= ema:
+            row['forecast_average'] = average_sold
+            row['baseline_source'] = 'average'
+            row['baseline_qty'] = average_sold
+        else:
+            row['forecast_average'] = ema
+            row['baseline_source'] = 'ema'
+            row['baseline_qty'] = ema
+        row['ema_uplift_applied'] = 0
+        row['ema_uplift_qty'] = 0.0
 
-    # if no sales last week and no sales in the prior week too, then use minimum of 1 case
+    # Special case: if no sales last week and no sales in the prior week too, 
+    # then use minimum of 1 case
     if (row.get('w1_sold') is None or row.get('w1_sold') == 0) and \
        (row.get('w2_sold') is None or row.get('w2_sold') == 0):
-        row['forecast_average'] = max(1.0, ema)
+        if ema >= 1.0:
+            row['forecast_average'] = ema
+            row['baseline_source'] = 'ema'
+            row['baseline_qty'] = ema
+        else:
+            row['forecast_average'] = 1.0
+            row['baseline_source'] = 'minimum_case'
+            row['baseline_qty'] = 1.0
+        row['ema_uplift_applied'] = 0
+        row['ema_uplift_qty'] = 0.0
+    
+    # Calculate baseline adjustment (how much we adjusted from LW sales)
+    row['baseline_adj_qty'] = row['forecast_average'] - w1_sold
     
     return row
 
@@ -202,11 +254,20 @@ def apply_decline_adjustment(row: dict, decline_threshold: float = 0.15) -> dict
         
     Returns:
         Updated row with adjusted forecast_average if applicable
+        Also sets:
+        - decline_adj_applied: 1 if adjustment was applied
+        - decline_adj_qty: Amount of adjustment added
     """
     w1_sold = row.get('w1_sold', 0) or 0
     w2_sold = row.get('w2_sold', 0) or 0
     w3_sold = row.get('w3_sold', 0) or 0
     w4_sold = row.get('w4_sold', 0) or 0
+    
+    # Initialize tracking fields
+    row['decline_adj_applied'] = 0
+    row['decline_adj_qty'] = 0.0
+    
+    pre_adjustment = row.get('forecast_average', 0)
     
     if w1_sold and w2_sold and w2_sold > 0:
         # Calculate decline percentages
@@ -222,7 +283,14 @@ def apply_decline_adjustment(row: dict, decline_threshold: float = 0.15) -> dict
         if item_decline >= decline_threshold and store_decline >= decline_threshold:
             # Use weighted average of older weeks
             adjusted = w2_sold * 0.5 + w3_sold * 0.4 + w4_sold * 0.1
-            row['forecast_average'] = max(row['forecast_average'], adjusted, row['ema'])
+            new_forecast = max(row['forecast_average'], adjusted, row['ema'])
+            
+            # Track the adjustment
+            if new_forecast > pre_adjustment:
+                row['decline_adj_applied'] = 1
+                row['decline_adj_qty'] = new_forecast - pre_adjustment
+            
+            row['forecast_average'] = new_forecast
     
     return row
 
@@ -241,13 +309,26 @@ def apply_high_shrink_adjustment(row: dict, high_shrink_threshold: float = 0.15)
     Returns:
         Updated row with adjusted forecast_average if applicable
     """
+    # Initialize tracking fields
+    row['high_shrink_adj_applied'] = 0
+    row['high_shrink_adj_qty'] = 0.0
+    
     w1_shrink = row.get('w1_shrink_p')
     w2_shrink = row.get('w2_shrink_p')
     
     if w1_shrink is not None and w2_shrink is not None:
         if w1_shrink >= high_shrink_threshold and w2_shrink >= high_shrink_threshold:
+            # Track pre-adjustment value
+            pre_adjustment = row.get('forecast_average', 0) or 0
+            
             # Use conservative estimate
             w1_sold = row.get('w1_sold', 0) or 0
-            row['forecast_average'] = max(w1_sold, row['ema'])
+            new_forecast = max(w1_sold, row['ema'])
+            
+            # Track the adjustment
+            row['high_shrink_adj_applied'] = 1
+            row['high_shrink_adj_qty'] = new_forecast - pre_adjustment
+            
+            row['forecast_average'] = new_forecast
     
     return row

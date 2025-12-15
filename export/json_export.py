@@ -22,11 +22,28 @@ def export_forecast_to_json(conn, region: str, forecast_date: str,
     output_dir = output_dir or settings.JSON_OUTPUT_DIR
     os.makedirs(output_dir, exist_ok=True)
     
+    # Build inactive stores filter
+    inactive_stores_filter = ""
+    if settings.INACTIVE_STORES:
+        inactive_stores_str = ','.join(str(s) for s in settings.INACTIVE_STORES)
+        inactive_stores_filter = f"AND store_no NOT IN ({inactive_stores_str})"
+    
+    # Build inactive store-item combinations filter
+    inactive_store_items_filter = ""
+    if settings.INACTIVE_STORE_ITEMS:
+        conditions = [
+            f"(store_no = {store_no} AND item_no = {item_no})"
+            for store_no, item_no in settings.INACTIVE_STORE_ITEMS
+        ]
+        inactive_store_items_filter = f"AND NOT ({' OR '.join(conditions)})"
+    
     query = f'''
         SELECT *
         FROM forecast_results
         WHERE region_code = '{region}'
         AND date_forecast = '{forecast_date}'
+        {inactive_stores_filter}
+        {inactive_store_items_filter}
         ORDER BY store_no, item_no
     '''
     

@@ -35,6 +35,21 @@ def get_forecast_export_query(region: str, date_str: str) -> str:
     Returns:
         SQL query string
     """
+    # Build inactive stores filter
+    inactive_stores_filter = ""
+    if settings.INACTIVE_STORES:
+        inactive_stores_str = ','.join(str(s) for s in settings.INACTIVE_STORES)
+        inactive_stores_filter = f"AND fr.store_no NOT IN ({inactive_stores_str})"
+    
+    # Build inactive store-item combinations filter
+    inactive_store_items_filter = ""
+    if settings.INACTIVE_STORE_ITEMS:
+        conditions = [
+            f"(fr.store_no = {store_no} AND fr.item_no = {item_no})"
+            for store_no, item_no in settings.INACTIVE_STORE_ITEMS
+        ]
+        inactive_store_items_filter = f"AND NOT ({' OR '.join(conditions)})"
+    
     return f'''
         SELECT
             EXTRACT(WEEK FROM fr.date_forecast) AS "Fiscal Week #",
@@ -62,6 +77,8 @@ def get_forecast_export_query(region: str, date_str: str) -> str:
         ) nm ON fr.store_no = nm.store_no
         WHERE fr.region_code = '{region}'
         AND fr.date_forecast = '{date_str}'
+        {inactive_stores_filter}
+        {inactive_store_items_filter}
         ORDER BY fr.store_no, fr.item_no
     '''
 
@@ -83,6 +100,21 @@ def get_forecast_export_query_with_weather(region: str, date_str: str) -> str:
     Returns:
         SQL query string
     """
+    # Build inactive stores filter
+    inactive_stores_filter = ""
+    if settings.INACTIVE_STORES:
+        inactive_stores_str = ','.join(str(s) for s in settings.INACTIVE_STORES)
+        inactive_stores_filter = f"AND fr.store_no NOT IN ({inactive_stores_str})"
+    
+    # Build inactive store-item combinations filter
+    inactive_store_items_filter = ""
+    if settings.INACTIVE_STORE_ITEMS:
+        conditions = [
+            f"(fr.store_no = {store_no} AND fr.item_no = {item_no})"
+            for store_no, item_no in settings.INACTIVE_STORE_ITEMS
+        ]
+        inactive_store_items_filter = f"AND NOT ({' OR '.join(conditions)})"
+    
     return f'''
         SELECT
             EXTRACT(WEEK FROM fr.date_forecast) AS "Fiscal Week #",
@@ -100,6 +132,8 @@ def get_forecast_export_query_with_weather(region: str, date_str: str) -> str:
             
             -- Weather info
             COALESCE(fr.weather_status_indicator, '-') AS "Weather Status",
+            COALESCE(fr.weather_severity_score, 0) AS "Weather Severity",
+            COALESCE(fr.weather_severity_category, 'MINIMAL') AS "Severity Category",
             COALESCE(fr.weather_adjustment_qty, 0) AS "Weather Adj Qty",
             
             -- Last week shrink %
@@ -136,6 +170,8 @@ def get_forecast_export_query_with_weather(region: str, date_str: str) -> str:
         ) nm ON fr.store_no = nm.store_no
         WHERE fr.region_code = '{region}'
         AND fr.date_forecast = '{date_str}'
+        {inactive_stores_filter}
+        {inactive_store_items_filter}
         ORDER BY fr.store_no, fr.item_no
     '''
 
@@ -213,10 +249,22 @@ def export_region_to_excel(conn, region: str,
     
     xl = XLWriter(output_file)
     
-    # Create custom format for weather adjustment (center-aligned)
+    # Create custom formats for weather indicators (center-aligned)
+    weather_red_format = xl.wb.add_format({
+        'bg_color': '#FFC7CE',
+        'font_color': '#9C0006',
+        'align': 'center',
+        'border': 1
+    })
     weather_orange_format = xl.wb.add_format({
         'bg_color': '#FFEB9C',
         'font_color': '#9C6500',
+        'align': 'center',
+        'border': 1
+    })
+    weather_green_format = xl.wb.add_format({
+        'bg_color': '#C6EFCE',
+        'font_color': '#006100',
         'align': 'center',
         'border': 1
     })
@@ -282,16 +330,32 @@ def export_region_to_excel(conn, region: str,
                 if col_name == 'Date':
                     ws.write(row_num, col_num, value, xl.format_date_costco)
                 elif col_name == 'Weather Status':
-                    # Apply color based on weather adjustment qty
-                    weather_adj = row.get('Weather Adj Qty', 0) or 0
-                    if weather_adj >= 10:
+                    # Apply color based on severity (left-aligned)
+                    severity = row.get('Weather Severity', 0) or 0
+                    if severity >= 6:
                         ws.write(row_num, col_num, value, weather_status_red_format)
-                    elif weather_adj > 0:
+                    elif severity >= 4:
                         ws.write(row_num, col_num, value, weather_status_orange_format)
                     else:
                         ws.write(row_num, col_num, value, weather_status_green_format)
+                elif col_name == 'Severity Category':
+                    category = value or 'MINIMAL'
+                    if category in ('SEVERE', 'HIGH'):
+                        ws.write(row_num, col_num, value, weather_red_format)
+                    elif category == 'MODERATE':
+                        ws.write(row_num, col_num, value, weather_orange_format)
+                    else:
+                        ws.write(row_num, col_num, value, weather_green_format)
                 elif col_name == 'Weather Adj Qty':
                     if value and value > 0:
+                        ws.write(row_num, col_num, value, weather_orange_format)
+                    else:
+                        ws.write(row_num, col_num, value)
+                elif col_name == 'LW Shrink %':
+                    # Highlight high shrink percentages
+                    if value and value >= 20:
+                        ws.write(row_num, col_num, value, weather_red_format)
+                    elif value and value >= 10:
                         ws.write(row_num, col_num, value, weather_orange_format)
                     else:
                         ws.write(row_num, col_num, value)

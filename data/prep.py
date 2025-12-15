@@ -39,6 +39,7 @@ def get_platter_inclusion_config(region_code: str, forecast_date: str) -> Option
 
 def get_historical_week_dates(forecast_date: datetime, 
                               num_weeks: int = 4,
+                              region_code: str = None,
                               exceptional_days: List[str] = None) -> List[str]:
     """
     Calculate historical week dates for forecasting, excluding exceptional days.
@@ -49,12 +50,15 @@ def get_historical_week_dates(forecast_date: datetime,
     Args:
         forecast_date: The date being forecasted
         num_weeks: Number of historical weeks needed (default 4)
-        exceptional_days: List of dates to exclude (YYYY-MM-DD format)
+        region_code: Region code to filter exceptional days (e.g., 'BA', 'LA')
+        exceptional_days: List of dates to exclude (YYYY-MM-DD format).
+                         If None, will use get_exceptional_days_for_region(region_code)
         
     Returns:
         List of date strings for W1, W2, W3, W4 (most recent first)
     """
-    exceptional_days = exceptional_days or settings.EXCEPTIONAL_DAYS
+    if exceptional_days is None:
+        exceptional_days = settings.get_exceptional_days_for_region(region_code)
     
     w_dates = []
     week_offset = 1
@@ -149,6 +153,9 @@ def create_forecast_results_table(conn: duckdb.DuckDBPyConnection, force: bool =
         result_store_shrink_p DOUBLE,
         result_price_unit DOUBLE,
 
+        -- Sold-out flag (last week sold == last week shipped, exact match only)
+        sold_out_lw INTEGER,
+
         -- Calculated forecast fields
         sales_velocity DOUBLE,
         sales_volatility DOUBLE,
@@ -219,9 +226,36 @@ def create_forecast_results_table(conn: duckdb.DuckDBPyConnection, force: bool =
         weather_visibility REAL,
         weather_severe_risk REAL,
 
-        -- Store-Level Pass Adjustment Fields
+        -- Baseline Adjustment Tracking (for waterfall analysis)
+        baseline_source VARCHAR,              -- 'lw_sales', 'ema', 'average', 'minimum_case'
+        baseline_qty DOUBLE,                  -- The baseline value used
+        baseline_adj_qty DOUBLE,              -- forecast_average - w1_sold
+        ema_uplift_applied INTEGER,           -- 1 if EMA > LW sales and EMA was used
+        ema_uplift_qty DOUBLE,                -- EMA - LW sales (positive when EMA > LW)
+        
+        -- Decline Adjustment Tracking (for items with significant WoW decline)
+        decline_adj_applied INTEGER,          -- 1 if decline adjustment was applied
+        decline_adj_qty DOUBLE,               -- Additional qty added due to decline pattern
+        
+        -- High Shrink Adjustment Tracking (for items with consecutive high shrink)
+        high_shrink_adj_applied INTEGER,      -- 1 if high shrink adjustment was applied
+        high_shrink_adj_qty DOUBLE,           -- Qty reduction due to high shrink (negative)
+        
+        -- Base Cover Tracking
+        base_cover_qty DOUBLE,                -- The actual cover quantity added
+        base_cover_type VARCHAR,              -- 'default' or 'sold_out'
+        
+        -- Rounding Adjustment Tracking (separated into up/down)
+        rounding_direction VARCHAR,           -- 'up', 'down', or 'none'
+        rounding_up_qty DOUBLE,               -- Positive quantity added due to rounding up
+        rounding_down_qty DOUBLE,             -- Positive quantity removed due to rounding down
+        rounding_net_qty DOUBLE,              -- Net impact of rounding (up - down)
+
+        -- Store-Level Pass Adjustment Fields (separated into growth/decline)
         forecast_qty_pre_store_pass DOUBLE,
         store_level_adjustment_qty DOUBLE,
+        store_level_growth_qty DOUBLE,        -- Positive qty added (when coverage too low)
+        store_level_decline_qty DOUBLE,       -- Positive qty removed (shrink control)
         store_level_adjustment_reason VARCHAR,
         store_level_adjusted INTEGER,
         store_level_shrink_pct DOUBLE,
@@ -282,6 +316,9 @@ def get_forecast_base_query(include_platters: bool = False, platter_items: Optio
     # Get case sizes from settings
     platter_case_size = settings.PLATTER_CASE_SIZE
     regular_case_size = settings.REGULAR_CASE_SIZE
+    
+    # Build the platter exclusion SQL - exclude platters from config_active unless platters should be included
+    platter_exclusion_sql = "" if include_platters else "AND ca.item_desc NOT LIKE '%PLATTER%'"
     
     # Build the platter inclusion SQL if needed
     platter_union_sql = ""
@@ -350,6 +387,7 @@ def get_forecast_base_query(include_platters: bool = False, platter_items: Optio
         AND s.region_code = p.region_code
         AND ca.active_date <= p.date_forecast
         AND ca.active_end_date >= p.date_forecast
+        ''' + platter_exclusion_sql + '''
         ''' + platter_union_sql + '''
     ),
     -- Calculate store-level aggregates for each week

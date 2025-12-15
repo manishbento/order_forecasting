@@ -86,6 +86,7 @@ def apply_intelligent_rounding(row: dict, case_pack_size: int,
     - Recent shrink percentages
     - How close the quantity is to the next case pack
     - Item classification (hero vs non-hero)
+    - Sold-out status (NEVER round down if sold out last week)
     
     Args:
         row: Item-store data dictionary with forecast_average_w_cover
@@ -106,11 +107,15 @@ def apply_intelligent_rounding(row: dict, case_pack_size: int,
     round_up_quantity = rounded_quantity - forecast_w_cover
     row['round_up_quantity'] = round_up_quantity
     
+    # Check if item was sold out last week - NEVER round down for sold-out items
+    sold_out_lw = row.get('sold_out_lw', 0)
+    
     # Determine if we should round down instead
     w1_shrink = row.get('w1_shrink_p')
     round_up_revised = round_up_quantity
     
-    if w1_shrink is not None:
+    # Only consider rounding down if item was NOT sold out last week
+    if not sold_out_lw and w1_shrink is not None:
         # If we're adding almost a full case (within 1 unit), round down
         if round_up_quantity >= (case_pack_size - 1):
             round_up_revised = -(case_pack_size - round_up_quantity)
@@ -132,6 +137,21 @@ def apply_intelligent_rounding(row: dict, case_pack_size: int,
         row['impact_of_rounding'] = row['forecast_quantity'] - forecast_w_cover
     else:
         row['impact_of_rounding'] = 0
+    
+    # Track rounding direction and separate up/down quantities for waterfall
+    if round_up_revised > 0:
+        row['rounding_direction'] = 'up'
+        row['rounding_up_qty'] = round_up_revised
+        row['rounding_down_qty'] = 0.0
+    elif round_up_revised < 0:
+        row['rounding_direction'] = 'down'
+        row['rounding_up_qty'] = 0.0
+        row['rounding_down_qty'] = round_up_revised  # negative value
+    else:
+        row['rounding_direction'] = 'none'
+        row['rounding_up_qty'] = 0.0
+        row['rounding_down_qty'] = 0.0
+    row['rounding_net_qty'] = round_up_revised
     
     return row
 
@@ -175,9 +195,11 @@ def apply_safety_stock_buffer(row: dict, case_pack_size: int,
     
     if should_apply and round_up_final < safety_stock:
         row['forecast_safety_stock_applied'] = case_pack_size
+        row['safety_stock_qty'] = case_pack_size  # Track for waterfall
         row['forecast_quantity'] += case_pack_size
     else:
         row['forecast_safety_stock_applied'] = 0
+        row['safety_stock_qty'] = 0.0  # Track for waterfall
     
     return row
 
@@ -235,16 +257,38 @@ def apply_inactive_store_override(row: dict, inactive_stores: List[int] = None) 
     return row
 
 
+def apply_inactive_store_item_override(row: dict, inactive_store_items: List[tuple] = None) -> dict:
+    """
+    Set forecast to zero for inactive store-item combinations.
+    
+    Args:
+        row: Item-store data dictionary
+        inactive_store_items: List of (store_no, item_no) tuples
+        
+    Returns:
+        Updated row with zero forecast for inactive store-item combinations
+    """
+    inactive_store_items = inactive_store_items or settings.INACTIVE_STORE_ITEMS
+    
+    store_item_combo = (row.get('store_no'), row.get('item_no'))
+    if store_item_combo in inactive_store_items:
+        row['forecast_quantity'] = 0
+    
+    return row
+
+
 def apply_all_rounding(row: dict, params: dict) -> dict:
     """
     Apply all rounding and safety stock logic in correct order.
     
     Order of operations:
-    1. Calculate base cover quantity
-    2. Apply intelligent rounding
-    3. Apply safety stock buffer
-    4. Apply effective cover guardrail
-    5. Apply inactive store override
+    1. Generate sold_out_lw flag (sold == shipped, exact match only)
+    2. Calculate base cover quantity (higher for sold-out items)
+    3. Apply intelligent rounding (no round-down for sold-out items)
+    4. Apply safety stock buffer
+    5. Apply effective cover guardrail (SKIPPED for sold-out items)
+    6. Apply inactive store override
+    7. Apply inactive store-item combination override
     
     Args:
         row: Item-store data dictionary with forecast_average
@@ -258,12 +302,21 @@ def apply_all_rounding(row: dict, params: dict) -> dict:
     base_cover = row.get('base_cover', params.get('BASE_COVER', 0.05))
     base_cover_sold_out = row.get('base_cover_sold_out', params.get('BASE_COVER_SOLD_OUT', 0.06))
     
-    # Determine if sold out last week
+    # Generate sold_out_lw flag: item was sold out if sold == shipped last week
+    # Note: We use exact equality (not >=) because shipped > sold would indicate
+    # erroneous data (shrink cannot be negative). Only true sell-outs qualify.
+    # This flag persists throughout the forecasting lifecycle
     w1_shipped = row.get('w1_shipped')
     w1_sold = row.get('w1_sold')
-    was_sold_out = (w1_shipped is not None and w1_sold is not None and w1_shipped == w1_sold)
+    was_sold_out = (
+        w1_shipped is not None and 
+        w1_sold is not None and 
+        w1_shipped > 0 and 
+        w1_sold == w1_shipped  # Exact match only - sold everything we shipped
+    )
+    row['sold_out_lw'] = 1 if was_sold_out else 0
     
-    # Calculate base cover
+    # Calculate base cover (higher cover for sold-out items)
     cover_qty, applied_cover = calculate_base_cover_quantity(
         row['forecast_average'], base_cover, was_sold_out, base_cover_sold_out
     )
@@ -271,11 +324,15 @@ def apply_all_rounding(row: dict, params: dict) -> dict:
     row['base_cover_applied'] = applied_cover
     row['forecast_average_w_cover'] = row['forecast_average'] + cover_qty
     
+    # Track base cover for waterfall
+    row['base_cover_qty'] = cover_qty
+    row['base_cover_type'] = 'sold_out' if was_sold_out else 'standard'
+    
     # Store case pack size
     row['case_pack_size'] = case_pack_size
     row['result_forecast_case_pack_size'] = case_pack_size
     
-    # Apply intelligent rounding
+    # Apply intelligent rounding (respects sold_out_lw - never rounds down for sold-out)
     row = apply_intelligent_rounding(
         row, case_pack_size, params.get('ROUND_DOWN_SHRINK_THRESHOLD', 0.0)
     )
@@ -283,9 +340,13 @@ def apply_all_rounding(row: dict, params: dict) -> dict:
     # Apply safety stock
     row = apply_safety_stock_buffer(row, case_pack_size)
     
-    # Apply guardrails
-    row = apply_effective_cover_guardrail(row, base_cover_sold_out)
+    # Apply guardrails (SKIPPED for sold-out items to promote their forecast)
+    if not was_sold_out:
+        row = apply_effective_cover_guardrail(row, base_cover_sold_out)
+    
+    # Apply inactive overrides (store and store-item combinations)
     row = apply_inactive_store_override(row)
+    row = apply_inactive_store_item_override(row)
     
     # Calculate delta from last week
     w1_shipped = row.get('w1_shipped') or 0

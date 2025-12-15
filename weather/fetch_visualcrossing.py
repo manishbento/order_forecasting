@@ -777,7 +777,12 @@ def process_weather_files(db_path: str = None, force_purge: bool = False):
                     day_high_rain = 1 if precip > 0.5 else 0
                 
                 # Calculate individual severity scores
-                rain_severity = calculate_rain_severity(precip, precip_prob)
+                # Use total_rain_expected (business hours only) instead of precip (daily total)
+                # total_rain_expected is already probability-weighted, so we pass 100% as probability
+                if total_rain_expected > 0:
+                    rain_severity = calculate_rain_severity(total_rain_expected, 100)
+                else:
+                    rain_severity = 0.0
                 snow_severity = calculate_snow_severity(snow, snow_depth)
                 wind_severity = calculate_wind_severity(wind_speed, wind_gust)
                 visibility_severity = calculate_visibility_severity(visibility)

@@ -15,10 +15,6 @@ import pyodbc
 import pandas as pd
 from azure.identity import ClientSecretCredential
 from sqlalchemy import create_engine
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 class FabricDatalakeWH:
@@ -51,7 +47,7 @@ class FabricDatalakeWH:
             database: Database name
             token_path: Path to store token cache
         """
-        # Use environment variables (no hardcoded defaults)
+        # Use environment variables or defaults
         self.client_id = client_id or os.environ.get('FABRIC_CLIENT_ID')
         self.client_secret = client_secret or os.environ.get('FABRIC_CLIENT_SECRET')
         self.tenant_id = tenant_id or os.environ.get('FABRIC_TENANT_ID')

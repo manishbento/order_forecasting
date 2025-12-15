@@ -33,8 +33,8 @@ CONFIG_FILE_PATH = os.path.join(BASE_DIR, "config_files", "Configuration.xlsx")
 # FORECAST DATE RANGE
 # =============================================================================
 # These define the date range for which forecasts will be generated
-FORECAST_START_DATE_V = datetime(2025, 12, 11)
-FORECAST_END_DATE_V = datetime(2025, 12, 14)
+FORECAST_START_DATE_V = datetime(2025, 12, 15)
+FORECAST_END_DATE_V = datetime(2025, 12, 17)
 
 # String versions for SQL queries
 FORECAST_START_DATE = FORECAST_START_DATE_V.strftime('%Y-%m-%d')
@@ -56,29 +56,64 @@ END_DATE = END_DATE_V.strftime('%Y-%m-%d')
 # REGION CONFIGURATION
 # =============================================================================
 # List of region codes to process
-REGION_CODES = ['BA', 'LA', 'SD', 'NE', 'SE', 'TE', 'MW']
+REGION_CODES = ['BA', 'LA', 'SD', 'NE', 'SE', 'TE']
 
 # =============================================================================
 # EXCEPTIONAL DAYS
 # =============================================================================
 # Days to be excluded from historical week calculations
 # These typically include holidays and days with abnormal sales patterns
+#
+# Format: Each entry is a dict with:
+#   - 'date': Date string (YYYY-MM-DD format)
+#   - 'regions': Optional list of region codes. If None or empty, applies to all regions.
+#   - 'comment': Optional description
+#
+# Examples:
+#   {'date': '2025-07-04', 'regions': None, 'comment': 'Independence Day - All regions'}
+#   {'date': '2025-11-27', 'regions': ['BA', 'LA'], 'comment': 'Thanksgiving - BA/LA only'}
 EXCEPTIONAL_DAYS = [
-    '2025-07-01',  # Independence Day Holiday
-    '2025-07-02',  # Independence Day Holiday
-    '2025-07-03',  # Independence Day Holiday
-    '2025-07-04',  # Independence Day Holiday
-    '2025-09-01',  # Labor Day Holiday
-    '2025-09-02',  # Next Day of Holiday
-    '2025-09-24',  # Not Available Yet
-    '2025-11-24',  # Not Available - Thanksgiving
-    '2025-11-25',  # Not Available - Thanksgiving
-    '2025-11-26',  # Not Available - Thanksgiving
-    '2025-11-27',  # Thanksgiving Day
-    '2025-11-28',  # Thanksgiving - Immediate
-    '2025-11-29',  # Thanksgiving - Immediate 2
-    '2025-11-30',  # Thanksgiving - Immediate 3
+    {'date': '2025-07-01', 'regions': None, 'comment': 'Independence Day Holiday'},
+    {'date': '2025-07-02', 'regions': None, 'comment': 'Independence Day Holiday'},
+    {'date': '2025-07-03', 'regions': None, 'comment': 'Independence Day Holiday'},
+    {'date': '2025-07-04', 'regions': None, 'comment': 'Independence Day Holiday'},
+    {'date': '2025-09-01', 'regions': None, 'comment': 'Labor Day Holiday'},
+    {'date': '2025-09-02', 'regions': None, 'comment': 'Next Day of Holiday'},
+    {'date': '2025-09-24', 'regions': None, 'comment': 'Not Available Yet'},
+    {'date': '2025-11-24', 'regions': None, 'comment': 'Not Available - Thanksgiving'},
+    {'date': '2025-11-25', 'regions': None, 'comment': 'Not Available - Thanksgiving'},
+    {'date': '2025-11-26', 'regions': None, 'comment': 'Not Available - Thanksgiving'},
+    {'date': '2025-11-27', 'regions': None, 'comment': 'Thanksgiving Day'},
+    {'date': '2025-11-28', 'regions': None, 'comment': 'Thanksgiving - Immediate'},
+    {'date': '2025-11-29', 'regions': None, 'comment': 'Thanksgiving - Immediate 2'},
+    {'date': '2025-11-30', 'regions': None, 'comment': 'Thanksgiving - Immediate 3'},
 ]
+
+
+def get_exceptional_days_for_region(region_code: str = None) -> list[str]:
+    """
+    Get list of exceptional days for a specific region.
+    
+    Args:
+        region_code: Region code (e.g., 'BA', 'LA'). If None, returns all exceptional days.
+    
+    Returns:
+        List of date strings (YYYY-MM-DD format) that are exceptional for the given region
+    """
+    exceptional_dates = []
+    for entry in EXCEPTIONAL_DAYS:
+        date_str = entry['date']
+        regions = entry.get('regions')
+        
+        # If regions is None or empty, applies to all regions
+        if not regions:
+            exceptional_dates.append(date_str)
+        # If region_code is provided and it's in the regions list
+        elif region_code and region_code in regions:
+            exceptional_dates.append(date_str)
+    
+    return exceptional_dates
+
 
 # =============================================================================
 # ITEM CONFIGURATION
@@ -126,6 +161,13 @@ INACTIVE_STORES = [
     129,  # Santa Clara
     423,  # Sunnyvale
     187   # Gwinnett
+]
+
+# Inactive store-item combinations that should receive zero forecast
+# Each entry is a tuple of (store_no, item_no)
+INACTIVE_STORE_ITEMS = [
+    # Example: (store_no, item_no)
+    (147, 1896526),  # Store 147, Item 1896526 - California Combo Avocado
 ]
 
 # =============================================================================
@@ -192,6 +234,7 @@ FABRIC_WAREHOUSE_DB = 'BNTO_WH_300_GOLD'
 # =============================================================================
 # WEATHER API CONFIGURATION
 # =============================================================================
+# These are loaded from environment variables (set in .env file)
 VISUALCROSSING_API_KEY = os.environ.get('VISUALCROSSING_API_KEY')
 ACCUWEATHER_API_KEY = os.environ.get('ACCUWEATHER_API_KEY')
 OPENWEATHER_API_KEY = os.environ.get('OPENWEATHER_API_KEY')

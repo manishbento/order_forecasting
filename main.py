@@ -45,6 +45,12 @@ from data.prep import (
     get_historical_week_dates,
     get_forecast_data
 )
+from data.aggregates import (
+    create_waterfall_aggregate_table,
+    create_daily_summary_aggregate_table,
+    populate_waterfall_aggregate,
+    populate_daily_summary_aggregate,
+)
 from forecasting.engine import (
     calculate_base_forecast,
     apply_decline_adjustment,
@@ -65,6 +71,7 @@ from weather.loader import load_all_weather_data, enrich_row_with_weather
 from export.excel import export_all_regions_to_excel
 from export.json_export import export_all_to_json
 from export.regional_summary import export_all_regional_summaries
+from export.executive_summary import export_all_executive_summaries
 from utils.fabric_warehouse import FabricDatalakeWH
 
 
@@ -304,8 +311,8 @@ def main():
             date_str = current_date.strftime('%Y-%m-%d')
             print(f"\n  Processing {region} | {date_str}")
             
-            # Get historical week dates
-            w_dates = get_historical_week_dates(current_date)
+            # Get historical week dates (region-specific exceptional days)
+            w_dates = get_historical_week_dates(current_date, region_code=region)
             print(f"    Week dates: {w_dates}")
             
             # Get base forecast data
@@ -319,6 +326,15 @@ def main():
                 
                 # Process each row through base forecast pipeline
                 for row in data:
+                    # Skip inactive stores
+                    if row.get('store_no') in settings.INACTIVE_STORES:
+                        continue
+                    
+                    # Skip inactive store-item combinations
+                    store_item_combo = (row.get('store_no'), row.get('item_no'))
+                    if store_item_combo in settings.INACTIVE_STORE_ITEMS:
+                        continue
+                    
                     processed = process_forecast_row(
                         row, params, current_date, vc_weather, accu_weather, owm_weather
                     )
@@ -393,6 +409,26 @@ def main():
         # Export regional summary reports (professional stakeholder reports)
         print("  Generating regional summary reports...")
         export_all_regional_summaries(
+            conn, settings.REGION_CODES,
+            settings.FORECAST_START_DATE_V, settings.FORECAST_END_DATE_V
+        )
+        
+        # Create aggregate tables for executive summary (pre-computed waterfall metrics)
+        print("  Building aggregate tables for executive summary...")
+        create_waterfall_aggregate_table(conn)
+        create_daily_summary_aggregate_table(conn)
+        populate_waterfall_aggregate(
+            conn, settings.REGION_CODES,
+            settings.FORECAST_START_DATE_V, settings.FORECAST_END_DATE_V
+        )
+        populate_daily_summary_aggregate(
+            conn, settings.REGION_CODES,
+            settings.FORECAST_START_DATE_V, settings.FORECAST_END_DATE_V
+        )
+        
+        # Export executive summary report (waterfall analysis for executives)
+        print("  Generating executive summary report...")
+        export_all_executive_summaries(
             conn, settings.REGION_CODES,
             settings.FORECAST_START_DATE_V, settings.FORECAST_END_DATE_V
         )
