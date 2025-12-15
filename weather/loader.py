@@ -53,8 +53,12 @@ def load_visualcrossing_data(db_path: str = None) -> Dict[Tuple[str, str], dict]
                     rain_severity, snow_severity, wind_severity,
                     visibility_severity, temp_severity,
                     -- Additional weather data
-                    snow_amount, wind_speed, wind_gust,
-                    temp_max, temp_min, visibility, severe_risk
+                    snow_amount, snow_depth, wind_speed, wind_gust,
+                    temp_max, temp_min, visibility, severe_risk,
+                    -- Precipitation details
+                    precip_probability, precip_cover,
+                    -- Atmosphere
+                    humidity, cloud_cover
                 FROM weather
             """).fetchall()
             
@@ -81,12 +85,19 @@ def load_visualcrossing_data(db_path: str = None) -> Dict[Tuple[str, str], dict]
                     'temp_severity': row[18],
                     # Additional weather data
                     'snow_amount': row[19],
-                    'wind_speed': row[20],
-                    'wind_gust': row[21],
-                    'temp_max': row[22],
-                    'temp_min': row[23],
-                    'visibility': row[24],
-                    'severe_risk': row[25],
+                    'snow_depth': row[20],
+                    'wind_speed': row[21],
+                    'wind_gust': row[22],
+                    'temp_max': row[23],
+                    'temp_min': row[24],
+                    'visibility': row[25],
+                    'severe_risk': row[26],
+                    # Precipitation details
+                    'precip_probability': row[27],
+                    'precip_cover': row[28],
+                    # Atmosphere
+                    'humidity': row[29],
+                    'cloud_cover': row[30],
                 }
         else:
             # Legacy schema
@@ -276,12 +287,17 @@ def enrich_row_with_weather(row: dict,
     row['weather_visibility_severity'] = vc_info.get('visibility_severity')
     row['weather_temp_severity'] = vc_info.get('temp_severity')
     row['weather_snow_amount'] = vc_info.get('snow_amount')
+    row['weather_snow_depth'] = vc_info.get('snow_depth')
     row['weather_wind_speed'] = vc_info.get('wind_speed')
     row['weather_wind_gust'] = vc_info.get('wind_gust')
     row['weather_temp_max'] = vc_info.get('temp_max')
     row['weather_temp_min'] = vc_info.get('temp_min')
     row['weather_visibility'] = vc_info.get('visibility')
     row['weather_severe_risk'] = vc_info.get('severe_risk')
+    row['weather_precip_probability'] = vc_info.get('precip_probability')
+    row['weather_precip_cover'] = vc_info.get('precip_cover')
+    row['weather_humidity'] = vc_info.get('humidity')
+    row['weather_cloud_cover'] = vc_info.get('cloud_cover')
     
     # AccuWeather data
     accu_info = accu_data.get(key, {})

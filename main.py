@@ -46,10 +46,8 @@ from data.prep import (
     get_forecast_data
 )
 from data.aggregates import (
-    create_waterfall_aggregate_table,
-    create_daily_summary_aggregate_table,
-    populate_waterfall_aggregate,
-    populate_daily_summary_aggregate,
+    create_all_aggregate_tables,
+    populate_all_aggregates
 )
 from forecasting.engine import (
     calculate_base_forecast,
@@ -72,6 +70,7 @@ from export.excel import export_all_regions_to_excel
 from export.json_export import export_all_to_json
 from export.regional_summary import export_all_regional_summaries
 from export.executive_summary import export_all_executive_summaries
+from export.ai_export import export_all_ai_data
 from utils.fabric_warehouse import FabricDatalakeWH
 
 
@@ -268,6 +267,9 @@ def main():
     # Create forecast results table
     create_forecast_results_table(conn, force=True)
     
+    # Create aggregate tables
+    create_all_aggregate_tables(conn, force=True)
+    
     # Step 1: Load data
     if settings.LOAD_DATA:
         print("\n[Step 1] Loading data from Fabric Datalake...")
@@ -390,6 +392,13 @@ def main():
         summary = get_weather_adjustment_summary(all_results)
         print_weather_adjustment_report(summary)
     
+    # Step 5.5: Populate aggregate tables (required for exports)
+    print("\n[Step 5.5] Building aggregate tables for reporting...")
+    populate_all_aggregates(
+        conn, settings.REGION_CODES,
+        settings.FORECAST_START_DATE, settings.FORECAST_END_DATE
+    )
+    
     # Step 6: Export results
     if settings.GENERATE_FILE_OUTPUTS:
         print("\n[Step 6] Exporting results...")
@@ -413,24 +422,19 @@ def main():
             settings.FORECAST_START_DATE_V, settings.FORECAST_END_DATE_V
         )
         
-        # Create aggregate tables for executive summary (pre-computed waterfall metrics)
-        print("  Building aggregate tables for executive summary...")
-        create_waterfall_aggregate_table(conn)
-        create_daily_summary_aggregate_table(conn)
-        populate_waterfall_aggregate(
-            conn, settings.REGION_CODES,
-            settings.FORECAST_START_DATE_V, settings.FORECAST_END_DATE_V
-        )
-        populate_daily_summary_aggregate(
-            conn, settings.REGION_CODES,
-            settings.FORECAST_START_DATE_V, settings.FORECAST_END_DATE_V
-        )
-        
         # Export executive summary report (waterfall analysis for executives)
         print("  Generating executive summary report...")
         export_all_executive_summaries(
             conn, settings.REGION_CODES,
             settings.FORECAST_START_DATE_V, settings.FORECAST_END_DATE_V
+        )
+        
+        # Export AI analysis data (for LLM consumption)
+        print("  Generating AI analysis exports...")
+        export_all_ai_data(
+            conn, settings.REGION_CODES,
+            settings.FORECAST_START_DATE, settings.FORECAST_END_DATE,
+            stores_per_region=5  # Top 5 stores per region
         )
     
     # Cleanup

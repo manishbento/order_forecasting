@@ -168,7 +168,11 @@ def get_waterfall_components_query(regions: list, start_date: str, end_date: str
             wa.lw_shipped,
             wa.lw_sold,
             
-            -- Baseline Source Breakdown
+            -- Baseline Uplift (total change from lw_sold to baseline, includes all baseline logic)
+            wa.baseline_uplift_qty,
+            wa.baseline_uplift_count,
+            
+            -- Baseline Source Breakdown (for reference)
             wa.baseline_lw_sales_qty,
             wa.baseline_lw_sales_count,
             wa.baseline_ema_qty,
@@ -178,7 +182,7 @@ def get_waterfall_components_query(regions: list, start_date: str, end_date: str
             wa.baseline_min_case_qty,
             wa.baseline_min_case_count,
             
-            -- EMA Uplift
+            -- EMA Uplift (legacy, subset of baseline_uplift)
             wa.ema_uplift_qty,
             wa.ema_uplift_count,
             
@@ -220,6 +224,39 @@ def get_waterfall_components_query(regions: list, start_date: str, end_date: str
             wa.weather_adj_qty,
             wa.weather_adj_count,
             
+            -- ===== Adjustment Type Tracking =====
+            -- Promotional Adjustments
+            wa.promo_adj_qty,
+            wa.promo_adj_count,
+            
+            -- Holiday Increase Adjustments
+            wa.holiday_increase_adj_qty,
+            wa.holiday_increase_adj_count,
+            
+            -- Cannibalism Adjustments
+            wa.cannibalism_adj_qty,
+            wa.cannibalism_adj_count,
+            
+            -- Adhoc Increase Adjustments
+            wa.adhoc_increase_adj_qty,
+            wa.adhoc_increase_adj_count,
+            
+            -- Adhoc Decrease Adjustments
+            wa.adhoc_decrease_adj_qty,
+            wa.adhoc_decrease_adj_count,
+            
+            -- Store Specific Adjustments
+            wa.store_specific_adj_qty,
+            wa.store_specific_adj_count,
+            
+            -- Item Specific Adjustments
+            wa.item_specific_adj_qty,
+            wa.item_specific_adj_count,
+            
+            -- Regional Adjustments
+            wa.regional_adj_qty,
+            wa.regional_adj_count,
+            
             -- Intermediate totals for verification
             wa.total_forecast_avg,
             wa.total_with_cover,
@@ -249,6 +286,7 @@ def get_weather_summary_query(regions: list, start_date: str, end_date: str) -> 
     Shows by region:
     - Store counts by severity category
     - Total and average weather severity
+    - Key weather metrics (rain, snow, wind, etc.)
     - Quantity adjusted due to weather
     
     Args:
@@ -292,6 +330,26 @@ def get_weather_summary_query(regions: list, start_date: str, end_date: str) -> 
             -- Severity metrics
             ROUND(AVG(COALESCE(fr.weather_severity_score, 0)), 2) AS avg_severity_score,
             MAX(fr.weather_severity_score) AS max_severity_score,
+            ROUND(AVG(COALESCE(fr.weather_sales_impact_factor, 1.0)), 3) AS avg_impact_factor,
+            ROUND(MIN(COALESCE(fr.weather_sales_impact_factor, 1.0)), 3) AS min_impact_factor,
+            
+            -- Weather condition metrics
+            ROUND(AVG(COALESCE(fr.weather_total_rain_expected, 0)), 2) AS avg_rain,
+            ROUND(MAX(COALESCE(fr.weather_total_rain_expected, 0)), 2) AS max_rain,
+            COUNT(DISTINCT CASE WHEN COALESCE(fr.weather_total_rain_expected, 0) > 0.1 THEN fr.store_no END) AS stores_with_rain,
+            ROUND(AVG(COALESCE(fr.weather_snow_amount, 0)), 1) AS avg_snow,
+            ROUND(MAX(COALESCE(fr.weather_snow_amount, 0)), 1) AS max_snow,
+            COUNT(DISTINCT CASE WHEN COALESCE(fr.weather_snow_amount, 0) > 0 THEN fr.store_no END) AS stores_with_snow,
+            ROUND(AVG(COALESCE(fr.weather_snow_depth, 0)), 1) AS avg_snow_depth,
+            ROUND(MAX(COALESCE(fr.weather_snow_depth, 0)), 1) AS max_snow_depth,
+            ROUND(AVG(COALESCE(fr.weather_wind_speed, 0)), 1) AS avg_wind,
+            ROUND(MAX(COALESCE(fr.weather_wind_gust, 0)), 1) AS max_wind_gust,
+            ROUND(AVG(COALESCE(fr.weather_visibility, 10)), 1) AS avg_visibility,
+            ROUND(MIN(COALESCE(fr.weather_visibility, 10)), 1) AS min_visibility,
+            ROUND(AVG(fr.weather_temp_min), 1) AS avg_temp_min,
+            ROUND(AVG(fr.weather_temp_max), 1) AS avg_temp_max,
+            ROUND(MIN(fr.weather_temp_min), 1) AS coldest_temp,
+            ROUND(MAX(fr.weather_temp_max), 1) AS warmest_temp,
             
             -- Item level weather adjustments
             SUM(CASE WHEN fr.weather_adjusted = 1 THEN 1 ELSE 0 END) AS items_adjusted,

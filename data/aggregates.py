@@ -53,7 +53,11 @@ def create_waterfall_aggregate_table(conn, force: bool = False) -> None:
         baseline_min_case_qty BIGINT,      -- Items using minimum case
         baseline_min_case_count INTEGER,   -- Count of items using minimum case
         
-        -- EMA Uplift (items where LW < EMA)
+        -- Baseline Uplift (total change from w1_sold to baseline, for ALL sources)
+        baseline_uplift_qty DOUBLE,        -- Total baseline uplift quantity
+        baseline_uplift_count INTEGER,     -- Count of items with baseline uplift
+        
+        -- EMA Uplift (items where LW < EMA) - legacy, for EMA-specific tracking
         ema_uplift_qty DOUBLE,             -- Total uplift quantity
         ema_uplift_count INTEGER,          -- Count of items with EMA uplift
         
@@ -75,9 +79,13 @@ def create_waterfall_aggregate_table(conn, force: bool = False) -> None:
         -- Rounding Components (separated)
         rounding_up_qty DOUBLE,            -- Total rounded UP (positive)
         rounding_up_count INTEGER,         -- Items rounded up
-        rounding_down_qty DOUBLE,          -- Total rounded DOWN (positive value = reduction)
+        rounding_down_qty DOUBLE,          -- Total rounded DOWN (negative value = reduction)
         rounding_down_count INTEGER,       -- Items rounded down
         rounding_net_qty DOUBLE,           -- Net rounding impact (up - down)
+        
+        -- Guardrail Component
+        guardrail_adj_qty DOUBLE,          -- Total guardrail reduction (negative)
+        guardrail_count INTEGER,           -- Items with guardrail applied
         
         -- Safety Stock Component
         safety_stock_qty DOUBLE,           -- Total safety stock added
@@ -94,6 +102,39 @@ def create_waterfall_aggregate_table(conn, force: bool = False) -> None:
         -- Weather Adjustment
         weather_adj_qty DOUBLE,            -- Total weather adjustment (typically negative)
         weather_adj_count INTEGER,         -- Items weather adjusted
+        
+        -- ===== NEW: Adjustment Type Tracking =====
+        -- Promotional Adjustments
+        promo_adj_qty DOUBLE,              -- Total promotional uplift
+        promo_adj_count INTEGER,           -- Items with promo adjustment
+        
+        -- Holiday Increase Adjustments
+        holiday_increase_adj_qty DOUBLE,   -- Total holiday increase
+        holiday_increase_adj_count INTEGER,-- Items with holiday increase
+        
+        -- Cannibalism Adjustments
+        cannibalism_adj_qty DOUBLE,        -- Total cannibalism reduction (negative)
+        cannibalism_adj_count INTEGER,     -- Items with cannibalism
+        
+        -- Adhoc Increase Adjustments
+        adhoc_increase_adj_qty DOUBLE,     -- Total adhoc increase
+        adhoc_increase_adj_count INTEGER,  -- Items with adhoc increase
+        
+        -- Adhoc Decrease Adjustments
+        adhoc_decrease_adj_qty DOUBLE,     -- Total adhoc decrease (negative)
+        adhoc_decrease_adj_count INTEGER,  -- Items with adhoc decrease
+        
+        -- Store Specific Adjustments
+        store_specific_adj_qty DOUBLE,     -- Total store-specific adjustments
+        store_specific_adj_count INTEGER,  -- Items with store-specific adj
+        
+        -- Item Specific Adjustments
+        item_specific_adj_qty DOUBLE,      -- Total item-specific adjustments
+        item_specific_adj_count INTEGER,   -- Items with item-specific adj
+        
+        -- Regional Adjustments
+        regional_adj_qty DOUBLE,           -- Total regional adjustments
+        regional_adj_count INTEGER,        -- Items with regional adj
         
         -- Intermediate Totals (for verification)
         total_forecast_avg DOUBLE,         -- Sum of forecast_average
@@ -170,7 +211,11 @@ def populate_waterfall_aggregate(conn, regions: list, start_date: str, end_date:
         SUM(CASE WHEN fr.baseline_source = 'minimum_case' THEN fr.baseline_qty ELSE 0 END) AS baseline_min_case_qty,
         SUM(CASE WHEN fr.baseline_source = 'minimum_case' THEN 1 ELSE 0 END) AS baseline_min_case_count,
         
-        -- EMA Uplift
+        -- Baseline Uplift (total change from w1_sold to baseline, for ALL sources)
+        SUM(COALESCE(fr.baseline_uplift_qty, 0)) AS baseline_uplift_qty,
+        SUM(CASE WHEN fr.baseline_uplift_qty > 0 THEN 1 ELSE 0 END) AS baseline_uplift_count,
+        
+        -- EMA Uplift (legacy, for EMA-specific tracking)
         SUM(COALESCE(fr.ema_uplift_qty, 0)) AS ema_uplift_qty,
         SUM(CASE WHEN fr.ema_uplift_applied = 1 THEN 1 ELSE 0 END) AS ema_uplift_count,
         
@@ -184,33 +229,72 @@ def populate_waterfall_aggregate(conn, regions: list, start_date: str, end_date:
         
         -- Base Cover
         SUM(COALESCE(fr.base_cover_qty, 0)) AS base_cover_total_qty,
-        SUM(CASE WHEN fr.base_cover_type = 'default' THEN COALESCE(fr.base_cover_qty, 0) ELSE 0 END) AS base_cover_default_qty,
-        SUM(CASE WHEN fr.base_cover_type = 'default' THEN 1 ELSE 0 END) AS base_cover_default_count,
+        SUM(CASE WHEN fr.base_cover_type = 'standard' THEN COALESCE(fr.base_cover_qty, 0) ELSE 0 END) AS base_cover_default_qty,
+        SUM(CASE WHEN fr.base_cover_type = 'standard' THEN 1 ELSE 0 END) AS base_cover_default_count,
         SUM(CASE WHEN fr.base_cover_type = 'sold_out' THEN COALESCE(fr.base_cover_qty, 0) ELSE 0 END) AS base_cover_soldout_qty,
         SUM(CASE WHEN fr.base_cover_type = 'sold_out' THEN 1 ELSE 0 END) AS base_cover_soldout_count,
         
-        -- Rounding (separated)
+        -- Rounding (from row-level tracking)
         SUM(COALESCE(fr.rounding_up_qty, 0)) AS rounding_up_qty,
         SUM(CASE WHEN fr.rounding_direction = 'up' THEN 1 ELSE 0 END) AS rounding_up_count,
         SUM(COALESCE(fr.rounding_down_qty, 0)) AS rounding_down_qty,
         SUM(CASE WHEN fr.rounding_direction = 'down' THEN 1 ELSE 0 END) AS rounding_down_count,
         SUM(COALESCE(fr.rounding_net_qty, 0)) AS rounding_net_qty,
         
+        -- Guardrail Adjustment
+        SUM(COALESCE(fr.guardrail_adj_qty, 0)) AS guardrail_adj_qty,
+        SUM(CASE WHEN fr.guardrail_applied = 1 THEN 1 ELSE 0 END) AS guardrail_count,
+        
         -- Safety Stock
         SUM(COALESCE(fr.forecast_safety_stock_applied, 0)) AS safety_stock_qty,
         SUM(CASE WHEN fr.forecast_safety_stock_applied > 0 THEN 1 ELSE 0 END) AS safety_stock_count,
         
-        -- Store Pass (separated)
+        -- Store Pass (from row-level tracking - decline is negative, growth is positive)
         SUM(COALESCE(fr.store_level_decline_qty, 0)) AS store_pass_decline_qty,
-        SUM(CASE WHEN fr.store_level_decline_qty > 0 THEN 1 ELSE 0 END) AS store_pass_decline_count,
+        SUM(CASE WHEN fr.store_level_decline_qty < 0 THEN 1 ELSE 0 END) AS store_pass_decline_count,
         SUM(COALESCE(fr.store_level_growth_qty, 0)) AS store_pass_growth_qty,
         SUM(CASE WHEN fr.store_level_growth_qty > 0 THEN 1 ELSE 0 END) AS store_pass_growth_count,
-        SUM(COALESCE(fr.store_level_growth_qty, 0)) - SUM(COALESCE(fr.store_level_decline_qty, 0)) AS store_pass_net_qty,
+        SUM(COALESCE(fr.store_level_decline_qty, 0)) + SUM(COALESCE(fr.store_level_growth_qty, 0)) AS store_pass_net_qty,
         COUNT(DISTINCT CASE WHEN fr.store_level_adjusted = 1 THEN fr.store_no END) AS store_pass_stores_adjusted,
         
-        -- Weather
-        -1 * SUM(COALESCE(fr.weather_adjustment_qty, 0)) AS weather_adj_qty,
+        -- Weather (now stored as negative = reduction, so use directly)
+        SUM(COALESCE(fr.weather_adjustment_qty, 0)) AS weather_adj_qty,
         SUM(CASE WHEN fr.weather_adjusted = 1 THEN 1 ELSE 0 END) AS weather_adj_count,
+        
+        -- ===== Adjustment Type Tracking =====
+        -- Promotional Adjustments
+        SUM(COALESCE(fr.promo_adj_qty, 0)) AS promo_adj_qty,
+        SUM(CASE WHEN fr.promo_adj_applied = 1 THEN 1 ELSE 0 END) AS promo_adj_count,
+        
+        -- Holiday Increase Adjustments
+        SUM(COALESCE(fr.holiday_increase_adj_qty, 0)) AS holiday_increase_adj_qty,
+        SUM(CASE WHEN fr.holiday_increase_adj_applied = 1 THEN 1 ELSE 0 END) AS holiday_increase_adj_count,
+        
+        -- Cannibalism Adjustments
+        SUM(COALESCE(fr.cannibalism_adj_qty, 0)) AS cannibalism_adj_qty,
+        SUM(CASE WHEN fr.cannibalism_adj_applied = 1 THEN 1 ELSE 0 END) AS cannibalism_adj_count,
+        
+        -- Adhoc Increase Adjustments
+        SUM(COALESCE(fr.adhoc_increase_adj_qty, 0)) AS adhoc_increase_adj_qty,
+        SUM(CASE WHEN fr.adhoc_increase_adj_applied = 1 THEN 1 ELSE 0 END) AS adhoc_increase_adj_count,
+        
+        -- Adhoc Decrease Adjustments
+        SUM(COALESCE(fr.adhoc_decrease_adj_qty, 0)) AS adhoc_decrease_adj_qty,
+        SUM(CASE WHEN fr.adhoc_decrease_adj_applied = 1 THEN 1 ELSE 0 END) AS adhoc_decrease_adj_count,
+        
+        -- Store Specific Adjustments
+        SUM(COALESCE(fr.store_specific_adj_qty, 0)) AS store_specific_adj_qty,
+        SUM(CASE WHEN fr.store_specific_adj_applied = 1 THEN 1 ELSE 0 END) AS store_specific_adj_count,
+        
+        -- Item Specific Adjustments
+        SUM(COALESCE(fr.item_specific_adj_qty, 0)) AS item_specific_adj_qty,
+        SUM(CASE WHEN fr.item_specific_adj_applied = 1 THEN 1 ELSE 0 END) AS item_specific_adj_count,
+        
+        -- Regional Adjustments
+        SUM(COALESCE(fr.regional_adj_qty, 0)) AS regional_adj_qty,
+        SUM(CASE WHEN fr.regional_adj_applied = 1 THEN 1 ELSE 0 END) AS regional_adj_count,
+        
+        -- Intermediate Totals
         
         -- Intermediate Totals
         SUM(fr.forecast_average) AS total_forecast_avg,
@@ -403,8 +487,8 @@ def populate_daily_summary_aggregate(conn, regions: list, start_date: str, end_d
         SUM(COALESCE(fr.ema_uplift_qty, 0)) AS total_ema_uplift,
         SUM(COALESCE(fr.base_cover_qty, 0)) AS total_base_cover,
         SUM(COALESCE(fr.rounding_net_qty, 0)) AS total_rounding_net,
-        SUM(COALESCE(fr.store_level_growth_qty, 0)) - SUM(COALESCE(fr.store_level_decline_qty, 0)) AS total_store_pass_net,
-        -1 * SUM(COALESCE(fr.weather_adjustment_qty, 0)) AS total_weather_adj,
+        SUM(COALESCE(fr.store_level_growth_qty, 0)) + SUM(COALESCE(fr.store_level_decline_qty, 0)) AS total_store_pass_net,
+        SUM(COALESCE(fr.weather_adjustment_qty, 0)) AS total_weather_adj,
         
         -- Weather
         ROUND(AVG(COALESCE(fr.weather_severity_score, 0)), 2) AS avg_weather_severity,

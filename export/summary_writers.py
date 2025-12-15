@@ -767,19 +767,19 @@ def write_item_detail_sheet(wb, conn, region: str,
 def write_weather_impact_sheet(wb, conn, region: str,
                                start_date: str, end_date: str,
                                formats: dict):
-    """Create the Weather Impact Summary worksheet."""
+    """Create the Weather Impact Summary worksheet with comprehensive weather data."""
     ws = wb.add_worksheet('Weather Impact')
     
     # Title
-    ws.merge_range('A1:X1', f'Weather Impact Summary - Region {region}', formats['title'])
-    ws.merge_range('A2:X2', f'Forecast Period: {start_date} to {end_date}', formats['subtitle'])
+    ws.merge_range('A1:AD1', f'Weather Impact Summary - Region {region}', formats['title'])
+    ws.merge_range('A2:AD2', f'Forecast Period: {start_date} to {end_date}', formats['subtitle'])
     ws.set_row(0, 30)
     ws.set_row(1, 25)
     
     current_row = 4
     
     # Section 1: Weather Summary by Date
-    ws.merge_range(current_row, 0, current_row, 15, 'Daily Weather Summary', formats['section'])
+    ws.merge_range(current_row, 0, current_row, 20, 'Daily Weather Summary', formats['section'])
     current_row += 1
     
     query = get_weather_summary_by_date_query(region, start_date, end_date)
@@ -791,13 +791,14 @@ def write_weather_impact_sheet(wb, conn, region: str,
         data = []
     
     if data:
-        # Write headers
+        # Write headers - updated to match new query columns
         headers = ['Date', 'Day', 'Store Count', 
                   '🔴 Severe', '🟠 High', '🟡 Moderate', '🟢 Low', '✅ Minimal',
-                  'Avg Severity', 'Max Severity', 'Avg Impact Factor', 'Min Impact Factor',
-                  'Avg Temp Min', 'Avg Temp Max', 'Coldest Temp', 'Warmest Temp',
-                  'Stores w/ Rain', 'Stores w/ Snow', 'Avg Snow Depth',
-                  'Total Qty Adj', 'Total Items Adj']
+                  'Avg Severity', 'Max Severity', 'Avg Impact', 'Min Impact',
+                  'Avg Min°F', 'Avg Max°F', 'Coldest', 'Warmest',
+                  'Rain Likely', 'Rain', 'Snow', 'Snow >2"',
+                  'Avg Rain"', 'Avg Snow"', 'Avg Depth"', 'Avg Wind', 'Max Gust',
+                  'Qty Adj', 'Items Adj']
         
         for col, header in enumerate(headers):
             ws.write(current_row, col, header, formats['col_header'])
@@ -858,15 +859,29 @@ def write_weather_impact_sheet(wb, conn, region: str,
             ws.write(current_row, col, d.get('Warmest Temp'), formats['decimal'])
             col += 1
             
-            # Precipitation
+            # Precipitation counts
+            ws.write(current_row, col, d.get('Stores w/ Rain Likely'), formats['number'])
+            col += 1
             ws.write(current_row, col, d.get('Stores w/ Rain'), formats['number'])
             col += 1
             ws.write(current_row, col, d.get('Stores w/ Snow'), formats['number'])
             col += 1
-            ws.write(current_row, col, d.get('Avg Snow Depth'), formats['decimal'])
+            ws.write(current_row, col, d.get('Stores w/ Snow Depth > 2in'), formats['number'])
             col += 1
             
-            # Impact
+            # Average weather metrics
+            ws.write(current_row, col, d.get('Avg Rain'), formats['decimal2'])
+            col += 1
+            ws.write(current_row, col, d.get('Avg Snow'), formats['decimal'])
+            col += 1
+            ws.write(current_row, col, d.get('Avg Snow Depth'), formats['decimal'])
+            col += 1
+            ws.write(current_row, col, d.get('Avg Wind'), formats['decimal'])
+            col += 1
+            ws.write(current_row, col, d.get('Max Wind Gust'), formats['decimal'])
+            col += 1
+            
+            # Adjustment impact
             ws.write(current_row, col, d.get('Total Qty Adj'), formats['number'])
             col += 1
             ws.write(current_row, col, d.get('Total Items Adj'), formats['number'])
@@ -875,7 +890,7 @@ def write_weather_impact_sheet(wb, conn, region: str,
     
     # Section 2: Store-Level Weather Details (ranked by severity)
     current_row += 3
-    ws.merge_range(current_row, 0, current_row, 19, 'Store-Level Weather Details (Ranked by Severity)', formats['section'])
+    ws.merge_range(current_row, 0, current_row, 29, 'Store-Level Weather Details (Ranked by Severity)', formats['section'])
     current_row += 1
     
     store_query = get_weather_store_detail_query(region, start_date, end_date)
@@ -887,34 +902,29 @@ def write_weather_impact_sheet(wb, conn, region: str,
         store_data = []
     
     if store_data:
-        # Write headers
-        store_headers = ['Weather', 'Date', 'Day', 'Store #', 'Store Name', 'Conditions',
-                        'Temp Min', 'Temp Max', 'Precip (in)', 'Precip %',
-                        'Snow (in)', 'Snow Depth', 'Wind (mph)', 'Visibility',
-                        'Severe Risk', 'Severity Score', 'Category', 'Impact Factor',
-                        'Qty Adjusted', 'Items Adj']
+        # Write headers - expanded with all new weather variables
+        store_headers = ['⚠', 'Date', 'Day', 'Store #', 'Store Name', 'Conditions',
+                        'Min°F', 'Max°F', 
+                        'Precip"', 'Precip%', 'Cover%',
+                        'Snow"', 'Depth"', 
+                        'Wind', 'Gust',
+                        'Vis(mi)', 'Humid%', 'Cloud%', 'SevRisk',
+                        'RainSv', 'SnowSv', 'WindSv', 'VisSv', 'TempSv',
+                        'Score', 'Category', 'Impact',
+                        'QtyAdj', 'Items']
         
         # Set column widths for store detail section
-        ws.set_column(current_row, 0, 10)   # Weather icon
-        ws.set_column(current_row, 1, 12)   # Date
-        ws.set_column(current_row, 2, 10)   # Day
-        ws.set_column(current_row, 3, 8)    # Store #
-        ws.set_column(current_row, 4, 22)   # Store Name
-        ws.set_column(current_row, 5, 20)   # Conditions
-        ws.set_column(current_row, 6, 10)   # Temp Min
-        ws.set_column(current_row, 7, 10)   # Temp Max
-        ws.set_column(current_row, 8, 10)   # Precip (in)
-        ws.set_column(current_row, 9, 10)   # Precip %
-        ws.set_column(current_row, 10, 10)  # Snow (in)
-        ws.set_column(current_row, 11, 10)  # Snow Depth
-        ws.set_column(current_row, 12, 10)  # Wind (mph)
-        ws.set_column(current_row, 13, 10)  # Visibility
-        ws.set_column(current_row, 14, 10)  # Severe Risk
-        ws.set_column(current_row, 15, 12)  # Severity Score
-        ws.set_column(current_row, 16, 12)  # Category
-        ws.set_column(current_row, 17, 12)  # Impact Factor
-        ws.set_column(current_row, 18, 12)  # Qty Adjusted
-        ws.set_column(current_row, 19, 10)  # Items Adj
+        col_widths = {
+            0: 4, 1: 11, 2: 10, 3: 8, 4: 20, 5: 18,
+            6: 6, 7: 6, 8: 7, 9: 7, 10: 7,
+            11: 6, 12: 6, 13: 6, 14: 6,
+            15: 7, 16: 7, 17: 7, 18: 7,
+            19: 7, 20: 7, 21: 7, 22: 6, 23: 7,
+            24: 6, 25: 10, 26: 7,
+            27: 8, 28: 6
+        }
+        for c, w in col_widths.items():
+            ws.set_column(c, c, w)
         
         for col, header in enumerate(store_headers):
             ws.write(current_row, col, header, formats['col_header'])
@@ -961,19 +971,53 @@ def write_weather_impact_sheet(wb, conn, region: str,
             col += 1
             ws.write(current_row, col, d.get('Temp Max'), formats['decimal'])
             col += 1
+            
+            # Precipitation details
             ws.write(current_row, col, d.get('Precip (in)'), formats['decimal2'])
             col += 1
-            ws.write(current_row, col, d.get('Precip %'), formats['decimal'])
+            ws.write(current_row, col, d.get('Precip %'), formats['number'])
             col += 1
+            ws.write(current_row, col, d.get('Precip Cover %'), formats['number'])
+            col += 1
+            
+            # Snow details
             ws.write(current_row, col, d.get('Snow (in)'), formats['decimal'])
             col += 1
             ws.write(current_row, col, d.get('Snow Depth'), formats['decimal'])
             col += 1
+            
+            # Wind details
             ws.write(current_row, col, d.get('Wind (mph)'), formats['decimal'])
             col += 1
+            ws.write(current_row, col, d.get('Wind Gust'), formats['decimal'])
+            col += 1
+            
+            # Atmosphere
             ws.write(current_row, col, d.get('Visibility'), formats['decimal'])
             col += 1
+            ws.write(current_row, col, d.get('Humidity %'), formats['number'])
+            col += 1
+            ws.write(current_row, col, d.get('Cloud Cover %'), formats['number'])
+            col += 1
             ws.write(current_row, col, d.get('Severe Risk'), formats['number'])
+            col += 1
+            
+            # Component severity scores
+            rain_sev = d.get('Rain Sev') or 0
+            snow_sev = d.get('Snow Sev') or 0
+            wind_sev = d.get('Wind Sev') or 0
+            vis_sev = d.get('Vis Sev') or 0
+            temp_sev = d.get('Temp Sev') or 0
+            
+            ws.write(current_row, col, rain_sev, get_severity_format(formats, rain_sev))
+            col += 1
+            ws.write(current_row, col, snow_sev, get_severity_format(formats, snow_sev))
+            col += 1
+            ws.write(current_row, col, wind_sev, get_severity_format(formats, wind_sev))
+            col += 1
+            ws.write(current_row, col, vis_sev, get_severity_format(formats, vis_sev))
+            col += 1
+            ws.write(current_row, col, temp_sev, get_severity_format(formats, temp_sev))
             col += 1
             
             # Severity Score with conditional formatting
@@ -1007,7 +1051,26 @@ def write_weather_impact_sheet(wb, conn, region: str,
     
     for label, fmt_key, desc in legend_items:
         ws.write(current_row, 0, label, formats[fmt_key])
-        ws.write(current_row, 1, desc, formats['text'])
+        ws.merge_range(current_row, 1, current_row, 5, desc, formats['text'])
+        current_row += 1
+    
+    # Add component severity explanation
+    current_row += 2
+    ws.merge_range(current_row, 0, current_row, 8, 'Component Severity Scores (0-10 scale):', formats['section'])
+    current_row += 1
+    
+    severity_components = [
+        ('RainSv', 'Rain Severity', 'Based on precip amount × probability (0.05-1.0+ inches)'),
+        ('SnowSv', 'Snow Severity', 'Based on new snow amount + accumulated depth bonus'),
+        ('WindSv', 'Wind Severity', 'Compounds with rain/snow; minimal standalone impact'),
+        ('VisSv', 'Visibility Severity', 'Fog/low visibility (<0.5mi can trigger alone)'),
+        ('TempSv', 'Temperature Severity', 'Extreme cold (<10°F) or heat (>100°F); max 3.0'),
+    ]
+    
+    for abbrev, name, desc in severity_components:
+        ws.write(current_row, 0, abbrev, formats['col_header'])
+        ws.write(current_row, 1, name, formats['text'])
+        ws.merge_range(current_row, 2, current_row, 8, desc, formats['text'])
         current_row += 1
     
     # Add weather icon legend
@@ -1034,4 +1097,4 @@ def write_weather_impact_sheet(wb, conn, region: str,
         current_row += 1
     
     # Freeze panes
-    ws.freeze_panes(6, 3)
+    ws.freeze_panes(6, 4)

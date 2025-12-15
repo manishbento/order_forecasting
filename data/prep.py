@@ -219,12 +219,17 @@ def create_forecast_results_table(conn: duckdb.DuckDBPyConnection, force: bool =
         weather_visibility_severity REAL,
         weather_temp_severity REAL,
         weather_snow_amount REAL,
+        weather_snow_depth REAL,
         weather_wind_speed REAL,
         weather_wind_gust REAL,
         weather_temp_max REAL,
         weather_temp_min REAL,
         weather_visibility REAL,
         weather_severe_risk REAL,
+        weather_precip_probability REAL,
+        weather_precip_cover REAL,
+        weather_humidity REAL,
+        weather_cloud_cover REAL,
 
         -- Baseline Adjustment Tracking (for waterfall analysis)
         baseline_source VARCHAR,              -- 'lw_sales', 'ema', 'average', 'minimum_case'
@@ -232,6 +237,7 @@ def create_forecast_results_table(conn: duckdb.DuckDBPyConnection, force: bool =
         baseline_adj_qty DOUBLE,              -- forecast_average - w1_sold
         ema_uplift_applied INTEGER,           -- 1 if EMA > LW sales and EMA was used
         ema_uplift_qty DOUBLE,                -- EMA - LW sales (positive when EMA > LW)
+        baseline_uplift_qty DOUBLE,           -- Uplift from w1_sold to baseline (for ALL baseline sources)
         
         -- Decline Adjustment Tracking (for items with significant WoW decline)
         decline_adj_applied INTEGER,          -- 1 if decline adjustment was applied
@@ -250,12 +256,16 @@ def create_forecast_results_table(conn: duckdb.DuckDBPyConnection, force: bool =
         rounding_up_qty DOUBLE,               -- Positive quantity added due to rounding up
         rounding_down_qty DOUBLE,             -- Positive quantity removed due to rounding down
         rounding_net_qty DOUBLE,              -- Net impact of rounding (up - down)
+        
+        -- Guardrail Adjustment Fields
+        guardrail_adj_qty DOUBLE,             -- Quantity reduced by guardrail (negative value)
+        guardrail_applied INTEGER,            -- 1 if guardrail was applied, 0 otherwise
 
         -- Store-Level Pass Adjustment Fields (separated into growth/decline)
         forecast_qty_pre_store_pass DOUBLE,
         store_level_adjustment_qty DOUBLE,
         store_level_growth_qty DOUBLE,        -- Positive qty added (when coverage too low)
-        store_level_decline_qty DOUBLE,       -- Positive qty removed (shrink control)
+        store_level_decline_qty DOUBLE,       -- Negative qty removed (shrink control)
         store_level_adjustment_reason VARCHAR,
         store_level_adjusted INTEGER,
         store_level_shrink_pct DOUBLE,
@@ -268,6 +278,65 @@ def create_forecast_results_table(conn: duckdb.DuckDBPyConnection, force: bool =
         weather_adjusted INTEGER,
         weather_status_indicator VARCHAR,
         sales_trend_4wk VARCHAR,
+        
+        -- ===== Adjustment Type Tracking Fields =====
+        -- Promotional Adjustments
+        promo_adj_applied INTEGER,
+        promo_adj_qty DOUBLE,
+        promo_adj_name VARCHAR,
+        promo_adj_multiplier DOUBLE,
+        
+        -- Holiday Increase Adjustments
+        holiday_increase_adj_applied INTEGER,
+        holiday_increase_adj_qty DOUBLE,
+        holiday_increase_adj_name VARCHAR,
+        holiday_increase_adj_multiplier DOUBLE,
+        
+        -- Cannibalism Adjustments
+        cannibalism_adj_applied INTEGER,
+        cannibalism_adj_qty DOUBLE,
+        cannibalism_adj_name VARCHAR,
+        cannibalism_adj_multiplier DOUBLE,
+        
+        -- Adhoc Increase Adjustments
+        adhoc_increase_adj_applied INTEGER,
+        adhoc_increase_adj_qty DOUBLE,
+        adhoc_increase_adj_name VARCHAR,
+        adhoc_increase_adj_multiplier DOUBLE,
+        
+        -- Adhoc Decrease Adjustments
+        adhoc_decrease_adj_applied INTEGER,
+        adhoc_decrease_adj_qty DOUBLE,
+        adhoc_decrease_adj_name VARCHAR,
+        adhoc_decrease_adj_multiplier DOUBLE,
+        
+        -- Store Specific Adjustments
+        store_specific_adj_applied INTEGER,
+        store_specific_adj_qty DOUBLE,
+        store_specific_adj_name VARCHAR,
+        store_specific_adj_multiplier DOUBLE,
+        
+        -- Item Specific Adjustments
+        item_specific_adj_applied INTEGER,
+        item_specific_adj_qty DOUBLE,
+        item_specific_adj_name VARCHAR,
+        item_specific_adj_multiplier DOUBLE,
+        
+        -- Regional Adjustments
+        regional_adj_applied INTEGER,
+        regional_adj_qty DOUBLE,
+        regional_adj_name VARCHAR,
+        regional_adj_multiplier DOUBLE,
+        
+        -- Legacy promotional tracking (for backward compatibility)
+        promo_uplift_applied INTEGER,
+        promo_uplift_qty DOUBLE,
+        promo_uplift_name VARCHAR,
+        promo_uplift_multiplier DOUBLE,
+        holiday_adj_applied INTEGER,
+        holiday_adj_qty DOUBLE,
+        holiday_adj_name VARCHAR,
+        holiday_adj_multiplier DOUBLE,
 
         -- AI Forecasting Fields (placeholder for future)
         ai_forecast DOUBLE,

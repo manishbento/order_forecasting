@@ -280,6 +280,9 @@ def write_waterfall_sheet(wb, conn, regions: list,
         baseline_min_count = d.get('baseline_min_case_count') or 0
         
         # Get adjustment values
+        baseline_uplift = d.get('baseline_uplift_qty') or 0
+        baseline_uplift_count = d.get('baseline_uplift_count') or 0
+        
         ema_uplift = d.get('ema_uplift_qty') or 0
         ema_uplift_count = d.get('ema_uplift_count') or 0
         
@@ -313,6 +316,31 @@ def write_waterfall_sheet(wb, conn, regions: list,
         weather_adj = d.get('weather_adj_qty') or 0
         weather_adj_count = d.get('weather_adj_count') or 0
         
+        # Get new adjustment type values
+        promo_adj = d.get('promo_adj_qty') or 0
+        promo_adj_count = d.get('promo_adj_count') or 0
+        
+        holiday_increase_adj = d.get('holiday_increase_adj_qty') or 0
+        holiday_increase_adj_count = d.get('holiday_increase_adj_count') or 0
+        
+        cannibalism_adj = d.get('cannibalism_adj_qty') or 0
+        cannibalism_adj_count = d.get('cannibalism_adj_count') or 0
+        
+        adhoc_increase_adj = d.get('adhoc_increase_adj_qty') or 0
+        adhoc_increase_adj_count = d.get('adhoc_increase_adj_count') or 0
+        
+        adhoc_decrease_adj = d.get('adhoc_decrease_adj_qty') or 0
+        adhoc_decrease_adj_count = d.get('adhoc_decrease_adj_count') or 0
+        
+        store_specific_adj = d.get('store_specific_adj_qty') or 0
+        store_specific_adj_count = d.get('store_specific_adj_count') or 0
+        
+        item_specific_adj = d.get('item_specific_adj_qty') or 0
+        item_specific_adj_count = d.get('item_specific_adj_count') or 0
+        
+        regional_adj = d.get('regional_adj_qty') or 0
+        regional_adj_count = d.get('regional_adj_count') or 0
+        
         delta_pct = d.get('delta_from_lw_sales_pct') or 0
         
         # Build baseline source description
@@ -337,10 +365,10 @@ def write_waterfall_sheet(wb, conn, regions: list,
                 'is_start': True,
             },
             {
-                'name': 'EMA Uplift (LW < Trend)',
-                'qty': ema_uplift,
-                'items_stores': f'{ema_uplift_count} items',
-                'note': 'Items where LW sales < moving average - uplift to trend level',
+                'name': 'Baseline Uplift',
+                'qty': baseline_uplift,
+                'items_stores': f'{baseline_uplift_count} items',
+                'note': f'Total uplift from LW sold to baseline (includes EMA: {ema_uplift_count} items, Average, Min case logic)',
                 'is_adjustment': True,
             },
             {
@@ -372,20 +400,6 @@ def write_waterfall_sheet(wb, conn, regions: list,
                 'is_adjustment': True,
             },
             {
-                'name': 'Rounding Up',
-                'qty': rounding_up,
-                'items_stores': f'{rounding_up_count} items',
-                'note': 'Case pack rounding UP to next full case',
-                'is_adjustment': True,
-            },
-            {
-                'name': 'Rounding Down',
-                'qty': -rounding_down if rounding_down > 0 else 0,  # Show as negative
-                'items_stores': f'{rounding_down_count} items',
-                'note': 'Case pack rounding DOWN (high shrink items)',
-                'is_adjustment': True,
-            },
-            {
                 'name': 'Safety Stock',
                 'qty': safety_stock,
                 'items_stores': f'{safety_stock_count} items',
@@ -393,8 +407,15 @@ def write_waterfall_sheet(wb, conn, regions: list,
                 'is_adjustment': True,
             },
             {
+                'name': 'Rounding (Case Pack)',
+                'qty': rounding_net,
+                'items_stores': f'{rounding_up_count}↑ {rounding_down_count}↓',
+                'note': f'Net rounding to full case packs (Up: +{rounding_up:.0f}, Down: -{rounding_down:.0f})',
+                'is_adjustment': True,
+            },
+            {
                 'name': 'Store Pass (Decline)',
-                'qty': -store_pass_decline if store_pass_decline > 0 else 0,  # Show as negative
+                'qty': store_pass_decline,  # Already negative in aggregate
                 'items_stores': f'{store_pass_stores} stores',
                 'note': 'Store-level shrink control - reduces forecast for high-shrink stores',
                 'is_adjustment': True,
@@ -404,6 +425,63 @@ def write_waterfall_sheet(wb, conn, regions: list,
                 'qty': store_pass_growth,
                 'items_stores': f'{store_pass_growth_count} items',
                 'note': 'Store-level coverage add - ensures minimum coverage',
+                'is_adjustment': True,
+            },
+            # ===== New Adjustment Types =====
+            {
+                'name': 'Promotional Adj',
+                'qty': promo_adj,
+                'items_stores': f'{promo_adj_count} items',
+                'note': 'Promotional uplift for sales events',
+                'is_adjustment': True,
+            },
+            {
+                'name': 'Holiday Increase',
+                'qty': holiday_increase_adj,
+                'items_stores': f'{holiday_increase_adj_count} items',
+                'note': 'Holiday-related demand increase',
+                'is_adjustment': True,
+            },
+            {
+                'name': 'Cannibalism Adj',
+                'qty': cannibalism_adj,  # Typically negative
+                'items_stores': f'{cannibalism_adj_count} items',
+                'note': 'Demand reduction due to competing products',
+                'is_adjustment': True,
+            },
+            {
+                'name': 'Adhoc Increase',
+                'qty': adhoc_increase_adj,
+                'items_stores': f'{adhoc_increase_adj_count} items',
+                'note': 'One-time temporary demand increase',
+                'is_adjustment': True,
+            },
+            {
+                'name': 'Adhoc Decrease',
+                'qty': adhoc_decrease_adj,  # Typically negative
+                'items_stores': f'{adhoc_decrease_adj_count} items',
+                'note': 'One-time temporary demand decrease',
+                'is_adjustment': True,
+            },
+            {
+                'name': 'Store Specific Adj',
+                'qty': store_specific_adj,
+                'items_stores': f'{store_specific_adj_count} items',
+                'note': 'Store-level specific adjustments',
+                'is_adjustment': True,
+            },
+            {
+                'name': 'Item Specific Adj',
+                'qty': item_specific_adj,
+                'items_stores': f'{item_specific_adj_count} items',
+                'note': 'Item-level specific adjustments',
+                'is_adjustment': True,
+            },
+            {
+                'name': 'Regional Adj',
+                'qty': regional_adj,
+                'items_stores': f'{regional_adj_count} items',
+                'note': 'Region-wide adjustments',
                 'is_adjustment': True,
             },
             {
@@ -493,31 +571,42 @@ def write_waterfall_columnar_sheet(wb, conn, regions: list,
     """
     ws = wb.add_worksheet('Waterfall Summary')
     
-    # Set column widths
+    # Set column widths for detailed waterfall
     ws.set_column('A:A', 10)   # Region
     ws.set_column('B:B', 12)   # Date
-    ws.set_column('C:C', 14)   # LW Sales (start)
-    ws.set_column('D:D', 16)   # Baseline Adj
-    ws.set_column('E:E', 14)   # Cover Adj
-    ws.set_column('F:F', 14)   # Rounding
-    ws.set_column('G:G', 14)   # Store Pass
-    ws.set_column('H:H', 14)   # Weather
-    ws.set_column('I:I', 14)   # Final Forecast
-    ws.set_column('J:J', 12)   # Total Δ %
+    ws.set_column('C:C', 12)   # LW Sales
+    ws.set_column('D:D', 12)   # Baseline Uplift
+    ws.set_column('E:E', 11)   # Decline Adj
+    ws.set_column('F:F', 11)   # High Shrink
+    ws.set_column('G:G', 12)   # Cover Default
+    ws.set_column('H:H', 12)   # Cover Sold-Out
+    ws.set_column('I:I', 11)   # Safety Stock
+    ws.set_column('J:J', 11)   # Rounding
+    ws.set_column('K:K', 11)   # Store Pass
+    ws.set_column('L:L', 11)   # Promo
+    ws.set_column('M:M', 11)   # Holiday
+    ws.set_column('N:N', 11)   # Cannibalism
+    ws.set_column('O:O', 11)   # Weather
+    ws.set_column('P:P', 12)   # Final Fcst
+    ws.set_column('Q:Q', 10)   # Δ %
     
     # Title
-    ws.merge_range('A1:K1', 'Waterfall Summary - Compact View', formats['title'])
-    ws.merge_range('A2:K2', f'Forecast Period: {start_date} to {end_date} | Values shown as Qty (% of LW Sales)', formats['subtitle'])
+    ws.merge_range('A1:Q1', 'Waterfall Summary - Detailed Component Breakdown', formats['title'])
+    ws.merge_range('A2:Q2', f'Forecast Period: {start_date} to {end_date} | Values shown as Qty (% of LW Sales)', formats['subtitle'])
     ws.set_row(0, 28)
     ws.set_row(1, 22)
     
-    # Headers - Starting from LW Sales
+    # Headers - All waterfall components
     headers = [
         'Region', 'Date', 
-        'LW Sales (Start)',
-        'Baseline Adj', 'Cover Adj',
-        'Rounding', 'Store Pass', 'Weather',
-        'Final Fcst', 'Δ from LW %'
+        'LW Sales',
+        'Baseline Up', 'Decline', 'Hi Shrink',
+        'Cover Std', 'Cover SO',
+        'Safety', 'Rounding',
+        'Store Pass',
+        'Promo', 'Holiday', 'Cannibal',
+        'Weather',
+        'Final', 'Δ %'
     ]
     
     for col, header in enumerate(headers):
@@ -542,13 +631,24 @@ def write_waterfall_columnar_sheet(wb, conn, regions: list,
         
         lw_sold = d.get('lw_sold') or 0
         final_forecast = d.get('final_forecast_qty') or 0
+        delta_pct = d.get('delta_from_lw_sales_pct') or 0
         
-        # Adjustment quantities (calculated from stage differences - already properly signed)
-        baseline_adj = d.get('baseline_adj') or 0
-        cover_adj = d.get('cover_adj') or 0
-        rounding = d.get('rounding_adj') or 0
-        store_pass = d.get('store_pass_adj') or 0  # Negated in query, shows as negative
-        weather = d.get('weather_adj') or 0  # Negated in query, shows as negative
+        # Get all component values (already properly signed in aggregate)
+        baseline_uplift = d.get('baseline_uplift_qty') or 0
+        decline_adj = d.get('decline_adj_qty') or 0
+        high_shrink = d.get('high_shrink_adj_qty') or 0
+        cover_default = d.get('base_cover_default_qty') or 0
+        cover_soldout = d.get('base_cover_soldout_qty') or 0
+        safety_stock = d.get('safety_stock_qty') or 0
+        rounding_net = d.get('rounding_net_qty') or 0
+        store_pass = (d.get('store_pass_decline_qty') or 0) + (d.get('store_pass_growth_qty') or 0)
+        
+        # New adjustment types
+        promo_adj = d.get('promo_adj_qty') or 0
+        holiday_adj = d.get('holiday_increase_adj_qty') or 0
+        cannibalism_adj = d.get('cannibalism_adj_qty') or 0
+        
+        weather = d.get('weather_adj_qty') or 0
         
         col = 0
         
@@ -558,16 +658,23 @@ def write_waterfall_columnar_sheet(wb, conn, regions: list,
         ws.write(row, col, date_val, formats['date'])
         col += 1
         
-        # LW Sales (Starting Point) - use waterfall_start format
+        # LW Sales (Starting Point)
         ws.write(row, col, lw_sold, formats['waterfall_start'])
         col += 1
         
-        # Adjustments with percentage of LW Sales
+        # All adjustments with percentage of LW Sales
         adjustments = [
-            baseline_adj,
-            cover_adj,
-            rounding,
+            baseline_uplift,
+            decline_adj,
+            high_shrink,
+            cover_default,
+            cover_soldout,
+            safety_stock,
+            rounding_net,
             store_pass,
+            promo_adj,
+            holiday_adj,
+            cannibalism_adj,
             weather,
         ]
         
@@ -595,10 +702,11 @@ def write_weather_summary_sheet(wb, conn, regions: list,
                                  start_date: str, end_date: str,
                                  formats: dict):
     """
-    Create the Weather Impact Summary worksheet.
+    Create the Weather Impact Summary worksheet with comprehensive weather metrics.
     
     Shows by region/date:
     - Store counts by severity category
+    - Key weather variables (rain, snow, wind, visibility)
     - Weather-adjusted item count
     - Quantity adjustment from weather
     
@@ -612,41 +720,54 @@ def write_weather_summary_sheet(wb, conn, regions: list,
     """
     ws = wb.add_worksheet('Weather Impact')
     
-    # Set column widths
-    ws.set_column('A:A', 10)   # Region
-    ws.set_column('B:B', 12)   # Date
+    # Set column widths - expanded for more weather data
+    ws.set_column('A:A', 8)    # Region
+    ws.set_column('B:B', 11)   # Date
     ws.set_column('C:C', 10)   # Day
-    ws.set_column('D:H', 10)   # Severity store counts
-    ws.set_column('I:I', 10)   # Total Stores
-    ws.set_column('J:J', 10)   # Avg Severity
-    ws.set_column('K:K', 12)   # Items Adjusted
-    ws.set_column('L:L', 14)   # Pre-Weather Qty
-    ws.set_column('M:M', 14)   # Weather Adj
-    ws.set_column('N:N', 12)   # Reduction %
-    ws.set_column('O:O', 18)   # Primary Condition
+    ws.set_column('D:H', 7)    # Severity store counts
+    ws.set_column('I:I', 8)    # Total Stores
+    ws.set_column('J:K', 8)    # Avg/Max Severity
+    ws.set_column('L:M', 8)    # Impact factors
+    ws.set_column('N:O', 6)    # Rain
+    ws.set_column('P:Q', 6)    # Snow
+    ws.set_column('R:S', 6)    # Snow Depth
+    ws.set_column('T:U', 6)    # Wind
+    ws.set_column('V:W', 6)    # Visibility
+    ws.set_column('X:Y', 6)    # Temp range
+    ws.set_column('Z:Z', 10)   # Items Adjusted
+    ws.set_column('AA:AA', 10) # Weather Adj
+    ws.set_column('AB:AB', 8)  # Reduction %
+    ws.set_column('AC:AC', 16) # Primary Condition
     
     # Title
-    ws.merge_range('A1:O1', 'Weather Impact Summary', formats['title'])
-    ws.merge_range('A2:O2', f'Forecast Period: {start_date} to {end_date}', formats['subtitle'])
+    ws.merge_range('A1:AC1', 'Weather Impact Summary - All Weather Variables', formats['title'])
+    ws.merge_range('A2:AC2', f'Forecast Period: {start_date} to {end_date}', formats['subtitle'])
     ws.set_row(0, 28)
     ws.set_row(1, 22)
     
-    # Headers
+    # Headers - two rows for grouping
+    # Row 3 - Group headers
+    ws.merge_range('D3:H3', 'Severity Distribution', formats['header_secondary'])
+    ws.merge_range('J3:M3', 'Severity Metrics', formats['header_secondary'])
+    ws.merge_range('N3:Y3', 'Weather Variables', formats['header_secondary'])
+    ws.merge_range('Z3:AB3', 'Adjustment Impact', formats['header_secondary'])
+    
+    # Row 4 - Detail headers
     headers = [
         'Region', 'Date', 'Day',
-        '🔴 Severe', '🟠 High', '🟡 Moderate', '🟢 Low', '✅ Minimal',
-        'Total Stores', 'Avg Severity',
-        'Items Adjusted',
-        'Pre-Weather Qty', 'Weather Adj', 'Reduction %',
+        '🔴Sev', '🟠High', '🟡Mod', '🟢Low', '✅Min',
+        'Stores', 'Avg', 'Max', 'AvgImp', 'MinImp',
+        'Rain"', 'MaxR', 'Snow"', 'MaxS', 'Depth', 'MaxD',
+        'Wind', 'Gust', 'AvgVis', 'MinVis',
+        'Lo°F', 'Hi°F',
+        'Items Adj',
+        'Qty Adj', 'Red%',
         'Primary Condition'
     ]
     
     for col, header in enumerate(headers):
-        if col >= 3 and col <= 7:  # Severity columns
-            ws.write(3, col, header, formats['header_secondary'])
-        else:
-            ws.write(3, col, header, formats['header_primary'])
-    ws.set_row(3, 35)
+        ws.write(4, col, header, formats['header_primary'])
+    ws.set_row(4, 35)
     
     # Get data
     query = get_weather_summary_query(regions, start_date, end_date)
@@ -658,7 +779,7 @@ def write_weather_summary_sheet(wb, conn, regions: list,
         data = []
     
     # Write data rows
-    row = 4
+    row = 5
     
     for d in data:
         col = 0
@@ -693,24 +814,64 @@ def write_weather_summary_sheet(wb, conn, regions: list,
         ws.write(row, col, d.get('total_stores') or 0, formats['number'])
         col += 1
         
-        # Average severity
+        # Severity metrics
         avg_severity = d.get('avg_severity_score') or 0
+        max_severity = d.get('max_severity_score') or 0
         ws.write(row, col, avg_severity, formats['decimal'])
+        col += 1
+        ws.write(row, col, max_severity, formats['decimal'])
+        col += 1
+        ws.write(row, col, d.get('avg_impact_factor'), formats['decimal3'] if 'decimal3' in formats else formats['decimal'])
+        col += 1
+        ws.write(row, col, d.get('min_impact_factor'), formats['decimal3'] if 'decimal3' in formats else formats['decimal'])
+        col += 1
+        
+        # Weather variables - Rain
+        ws.write(row, col, d.get('avg_rain'), formats['decimal'])
+        col += 1
+        ws.write(row, col, d.get('max_rain'), formats['decimal'])
+        col += 1
+        
+        # Snow
+        ws.write(row, col, d.get('avg_snow'), formats['decimal'])
+        col += 1
+        ws.write(row, col, d.get('max_snow'), formats['decimal'])
+        col += 1
+        
+        # Snow Depth
+        ws.write(row, col, d.get('avg_snow_depth'), formats['decimal'])
+        col += 1
+        ws.write(row, col, d.get('max_snow_depth'), formats['decimal'])
+        col += 1
+        
+        # Wind
+        ws.write(row, col, d.get('avg_wind'), formats['decimal'])
+        col += 1
+        ws.write(row, col, d.get('max_wind_gust'), formats['decimal'])
+        col += 1
+        
+        # Visibility
+        ws.write(row, col, d.get('avg_visibility'), formats['decimal'])
+        col += 1
+        ws.write(row, col, d.get('min_visibility'), formats['decimal'])
+        col += 1
+        
+        # Temperature
+        ws.write(row, col, d.get('avg_temp_min'), formats['decimal'])
+        col += 1
+        ws.write(row, col, d.get('avg_temp_max'), formats['decimal'])
         col += 1
         
         # Items adjusted
         items_adjusted = d.get('items_adjusted') or 0
         total_items = d.get('total_items') or 0
-        ws.write(row, col, f"{items_adjusted} / {total_items}", formats['text_center'])
+        ws.write(row, col, f"{items_adjusted}/{total_items}", formats['text_center'])
         col += 1
         
         # Quantities
-        pre_weather = d.get('pre_weather_qty') or 0
         weather_adj = d.get('weather_adj_qty') or 0
         reduction_pct = d.get('weather_reduction_pct') or 0
         
-        ws.write(row, col, pre_weather, formats['number'])
-        col += 1
         ws.write(row, col, weather_adj, formats['number'] if weather_adj >= 0 else formats['waterfall_decrease'])
         col += 1
         ws.write(row, col, reduction_pct, formats['percent'])
@@ -730,17 +891,37 @@ def write_weather_summary_sheet(wb, conn, regions: list,
         ('🔴 Severe (7+)', 'Major weather event - significant forecast reduction'),
         ('🟠 High (5-7)', 'Poor conditions - moderate forecast reduction'),
         ('🟡 Moderate (3-5)', 'Unfavorable conditions - slight forecast reduction'),
-        ('🟢 Low (1-3)', 'Minor weather impact - minimal adjustment'),
-        ('✅ Minimal (0-1)', 'Normal conditions - no adjustment'),
+        ('🟢 Low (1.5-3)', 'Minor weather impact - minimal adjustment'),
+        ('✅ Minimal (0-1.5)', 'Normal conditions - no adjustment'),
     ]
     
     for icon_text, description in legend_items:
         ws.write(row, 0, icon_text, formats['text_left'])
-        ws.write(row, 1, description, formats['text_left'])
+        ws.merge_range(row, 1, row, 5, description, formats['text_left'])
+        row += 1
+    
+    # Add weather variable legend
+    row += 2
+    ws.write(row, 0, 'Weather Variables:', formats['section_title'])
+    row += 1
+    
+    variable_legend = [
+        ('Rain"/MaxR', 'Average and maximum rainfall in inches'),
+        ('Snow"/MaxS', 'Average and maximum new snowfall in inches'),
+        ('Depth/MaxD', 'Average and maximum snow depth accumulation'),
+        ('Wind/Gust', 'Average wind speed and maximum wind gust (mph)'),
+        ('AvgVis/MinVis', 'Average and minimum visibility (miles)'),
+        ('Lo°F/Hi°F', 'Average low and high temperatures'),
+        ('AvgImp/MinImp', 'Impact factor (1.0=no impact, lower=more reduction)'),
+    ]
+    
+    for var, desc in variable_legend:
+        ws.write(row, 0, var, formats['header_primary'] if 'header_primary' in formats else formats['text_left'])
+        ws.merge_range(row, 1, row, 6, desc, formats['text_left'])
         row += 1
     
     # Freeze panes
-    ws.freeze_panes(4, 3)
+    ws.freeze_panes(5, 3)
 
 
 def write_daily_totals_sheet(wb, conn, regions: list,

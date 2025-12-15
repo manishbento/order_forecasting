@@ -16,17 +16,44 @@ This module applies business rules that modify the base forecast based on:
 from datetime import datetime
 from typing import List, Tuple
 from copy import deepcopy
-
-from config.settings import NON_HERO_ITEMS
+from enum import Enum
 
 
 # =============================================================================
-# PROMOTION CONFIGURATIONS
+# ADJUSTMENT TYPE ENUM
 # =============================================================================
-# These can be moved to external configuration files in the future
 
-PROMOTIONS = [
+class AdjustmentType(Enum):
+    """
+    Defines all possible adjustment types for forecast modifications.
+    Each type will be tracked separately in the waterfall breakdown.
+    """
+    PROMO = "promo"                          # Standard promotional uplifts
+    HOLIDAY_INCREASE = "holiday_increase"    # Holiday-related demand increases
+    CANNIBALISM = "cannibalism"              # Demand reduction due to competing products
+    ADHOC_INCREASE = "adhoc_increase"        # One-time or temporary demand increases
+    ADHOC_DECREASE = "adhoc_decrease"        # One-time or temporary demand decreases
+    STORE_SPECIFIC = "store_specific"        # Store-level adjustments
+    ITEM_SPECIFIC = "item_specific"          # Item-level adjustments
+    REGIONAL = "regional"                    # Region-level adjustments
+
+
+# =============================================================================
+# ADJUSTMENT CONFIGURATIONS
+# =============================================================================
+# Each adjustment must specify:
+# - type: AdjustmentType enum value
+# - name: Descriptive name for the adjustment
+# - regions: List of affected regions (or None for all)
+# - start_date: Start date for the adjustment
+# - end_date: End date for the adjustment
+# - multiplier: Adjustment multiplier (>1.0 for increases, <1.0 for decreases)
+# - Optional: stores, items, or other filter criteria
+
+ADJUSTMENTS = [
+    # ========== PROMOTIONAL ADJUSTMENTS ==========
     {
+        'type': AdjustmentType.PROMO,
         'name': 'LA_August_2025',
         'regions': ['LA'],
         'start_date': datetime(2025, 8, 19),
@@ -34,6 +61,7 @@ PROMOTIONS = [
         'multiplier': 1.05
     },
     {
+        'type': AdjustmentType.PROMO,
         'name': 'BA_August_2025',
         'regions': ['BA'],
         'start_date': datetime(2025, 8, 25),
@@ -41,40 +69,43 @@ PROMOTIONS = [
         'multiplier': 1.10
     },
     {
+        'type': AdjustmentType.PROMO,
         'name': 'BA_National_Sept_2025',
         'regions': ['BA'],
         'start_date': datetime(2025, 9, 22),
         'end_date': datetime(2025, 9, 28),
         'multiplier': 1.05
     },
-]
-
-THANKSGIVING_ADJUSTMENTS = [
+    
+    # ========== HOLIDAY ADJUSTMENTS ==========
     {
-        'name': 'BA_SD_Cannibalism',
-        'regions': ['BA', 'SD'],
-        'start_date': datetime(2025, 11, 21),
-        'end_date': datetime(2025, 11, 23),
-        'multiplier': 0.88
-    },
-    {
+        'type': AdjustmentType.HOLIDAY_INCREASE,
         'name': 'Other_Regions_Thanksgiving',
-        'regions': ['LA', 'NE', 'TE'],  # Excludes BA, SD, SE
+        'regions': ['LA', 'NE', 'TE'],
         'start_date': datetime(2025, 11, 24),
         'end_date': datetime(2025, 11, 26),
         'multiplier': 1.10
     },
     {
+        'type': AdjustmentType.HOLIDAY_INCREASE,
         'name': 'SE_Thanksgiving',
         'regions': ['SE'],
         'start_date': datetime(2025, 11, 24),
         'end_date': datetime(2025, 11, 24),
         'multiplier': 1.05
     },
-]
-
-DECEMBER_ADJUSTMENTS = [
+    
+    # ========== CANNIBALISM ADJUSTMENTS ==========
     {
+        'type': AdjustmentType.CANNIBALISM,
+        'name': 'BA_SD_Thanksgiving_Cannibalism',
+        'regions': ['BA', 'SD'],
+        'start_date': datetime(2025, 11, 21),
+        'end_date': datetime(2025, 11, 23),
+        'multiplier': 0.88
+    },
+    {
+        'type': AdjustmentType.CANNIBALISM,
         'name': 'BA_Platter_Cannibalism',
         'regions': ['BA'],
         'start_date': datetime(2025, 12, 4),
@@ -82,18 +113,337 @@ DECEMBER_ADJUSTMENTS = [
         'multiplier': 0.88
     },
     {
+        'type': AdjustmentType.CANNIBALISM,
         'name': 'LA_SD_Platter_Cannibalism',
         'regions': ['LA', 'SD'],
         'start_date': datetime(2025, 12, 18),
         'end_date': datetime(2025, 12, 21),
         'multiplier': 0.87
     },
+    
+    # ========== ADHOC INCREASE ADJUSTMENTS ==========
+    # Example: Store-specific temporary increase for high-volume stores
+    {
+        'type': AdjustmentType.ADHOC_INCREASE,
+        'name': 'High_Volume_Stores_Group1',
+        'regions': None,  # All regions
+        'stores': [490, 674, 691, 738, 1375, 1653],
+        'start_date': datetime(2025, 10, 30),
+        'end_date': datetime(2025, 11, 2),
+        'multiplier': 1.20
+    },
+    {
+        'type': AdjustmentType.ADHOC_INCREASE,
+        'name': 'High_Volume_Stores_Group2',
+        'regions': None,  # All regions
+        'stores': [465, 1058, 427, 481, 644, 436, 736, 1028, 1620, 431, 407, 1079],
+        'start_date': datetime(2025, 10, 10),
+        'end_date': datetime(2025, 10, 16),
+        'multiplier': 1.10
+    },
+    
+    # Example: Item-specific increase for new product launch
+    {
+        'type': AdjustmentType.ITEM_SPECIFIC,
+        'name': 'New_Item_Launch_1984587',
+        'regions': None,  # All regions
+        'items': [1984587],
+        'start_date': datetime(2025, 9, 1),
+        'end_date': datetime(2025, 9, 21),
+        'multiplier': 1.20
+    },
+    {
+        'type': AdjustmentType.ITEM_SPECIFIC,
+        'name': 'New_Item_Launch_1984587_Phase2',
+        'regions': None,  # All regions
+        'items': [1984587],
+        'start_date': datetime(2025, 9, 22),
+        'end_date': datetime(2025, 9, 28),
+        'multiplier': 1.07
+    },
+    {
+        'type': AdjustmentType.ITEM_SPECIFIC,
+        'name': 'Item_1984587_BA_Boost',
+        'regions': ['BA'],
+        'items': [1984587],
+        'start_date': datetime(2025, 11, 17),
+        'end_date': datetime(2025, 11, 23),
+        'multiplier': 1.10
+    },
+    
+    # Example: Regional boost
+    {
+        'type': AdjustmentType.REGIONAL,
+        'name': 'NE_Regional_Boost',
+        'regions': ['NE'],
+        'start_date': datetime(2025, 10, 20),
+        'end_date': datetime(2025, 11, 2),
+        'multiplier': 1.15
+    },
+    
+    # ========== ADHOC DECREASE ADJUSTMENTS ==========
+    # Example: Store-specific temporary decrease
+    {
+        'type': AdjustmentType.ADHOC_DECREASE,
+        'name': 'Store_423_Decrease',
+        'regions': None,  # All regions
+        'stores': [423],
+        'start_date': datetime(2025, 11, 3),
+        'end_date': datetime(2025, 11, 9),
+        'multiplier': 0.90
+    },
+    
+    # Example: Item-specific decrease in specific region
+    {
+        'type': AdjustmentType.ITEM_SPECIFIC,
+        'name': 'Salmon_Combo_TE_Boost',
+        'regions': ['TE'],
+        'items': [1713314],
+        'start_date': datetime(2025, 10, 20),
+        'end_date': datetime(2025, 11, 2),
+        'multiplier': 1.30
+    },
+    {
+        'type': AdjustmentType.ITEM_SPECIFIC,
+        'name': 'Item_1896526_BA_Boost',
+        'regions': ['BA'],
+        'items': [1896526],
+        'start_date': datetime(2025, 11, 17),
+        'end_date': datetime(2025, 11, 23),
+        'multiplier': 1.30
+    },
 ]
+
+
+# =============================================================================
+# INSTRUCTIONS FOR ADDING NEW ADJUSTMENTS
+# =============================================================================
+"""
+To add a new adjustment, simply append to the ADJUSTMENTS list above with:
+
+1. 'type': Choose from AdjustmentType enum:
+   - PROMO: Standard promotional uplifts
+   - HOLIDAY_INCREASE: Holiday-related demand increases
+   - CANNIBALISM: Demand reduction due to competing products
+   - ADHOC_INCREASE: One-time or temporary demand increases
+   - ADHOC_DECREASE: One-time or temporary demand decreases
+   - STORE_SPECIFIC: Store-level adjustments
+   - ITEM_SPECIFIC: Item-level adjustments
+   - REGIONAL: Region-level adjustments
+
+2. 'name': Descriptive name for tracking (will appear in exports)
+
+3. 'regions': List of region codes ['BA', 'LA', etc.] or None for all regions
+
+4. 'start_date': datetime(YYYY, MM, DD) - when adjustment begins
+
+5. 'end_date': datetime(YYYY, MM, DD) - when adjustment ends
+
+6. 'multiplier': Float value (>1.0 for increases, <1.0 for decreases)
+
+7. Optional filters:
+   - 'stores': List of store numbers [123, 456, etc.]
+   - 'items': List of item numbers [789, 101112, etc.]
+
+EXAMPLES:
+
+# Simple region-wide promotion
+{
+    'type': AdjustmentType.PROMO,
+    'name': 'Summer_Sale_2026',
+    'regions': ['BA', 'LA'],
+    'start_date': datetime(2026, 7, 1),
+    'end_date': datetime(2026, 7, 7),
+    'multiplier': 1.15
+}
+
+# Store-specific adjustment
+{
+    'type': AdjustmentType.STORE_SPECIFIC,
+    'name': 'Grand_Opening_Store_999',
+    'regions': None,
+    'stores': [999],
+    'start_date': datetime(2026, 8, 1),
+    'end_date': datetime(2026, 8, 7),
+    'multiplier': 1.50
+}
+
+# Item-specific cannibalism
+{
+    'type': AdjustmentType.CANNIBALISM,
+    'name': 'Item_123_Competitor_Launch',
+    'regions': ['SD', 'SE'],
+    'items': [123456],
+    'start_date': datetime(2026, 9, 1),
+    'end_date': datetime(2026, 9, 30),
+    'multiplier': 0.85
+}
+
+NO CODE CHANGES NEEDED - Just add your adjustment to the ADJUSTMENTS list!
+The waterfall tracking will automatically capture your adjustment by type.
+"""
 
 
 # =============================================================================
 # ADJUSTMENT FUNCTIONS
 # =============================================================================
+
+def initialize_adjustment_tracking_fields(row: dict) -> dict:
+    """
+    Initialize all adjustment tracking fields to default values.
+    
+    This ensures all possible adjustment fields exist in the row,
+    making downstream aggregation easier.
+    
+    Args:
+        row: Item-store data dictionary
+        
+    Returns:
+        Row with initialized tracking fields
+    """
+    # Track adjustments by type
+    for adj_type in AdjustmentType:
+        prefix = adj_type.value
+        row[f'{prefix}_adj_applied'] = 0
+        row[f'{prefix}_adj_qty'] = 0.0
+        row[f'{prefix}_adj_name'] = ''
+        row[f'{prefix}_adj_multiplier'] = 1.0
+    
+    # Legacy fields for backward compatibility
+    row['promo_uplift_applied'] = 0
+    row['promo_uplift_qty'] = 0.0
+    row['promo_uplift_name'] = ''
+    row['promo_uplift_multiplier'] = 1.0
+    row['holiday_adj_applied'] = 0
+    row['holiday_adj_qty'] = 0.0
+    row['holiday_adj_name'] = ''
+    row['holiday_adj_multiplier'] = 1.0
+    row['cannibalism_adj_applied'] = 0
+    row['cannibalism_adj_qty'] = 0.0
+    
+    return row
+
+
+def apply_adjustments(row: dict, current_date: datetime, 
+                     adjustments_list: List[dict] = None) -> dict:
+    """
+    Apply all configured adjustments dynamically based on their type.
+    
+    This is the core adjustment engine that:
+    1. Iterates through all adjustments in ADJUSTMENTS list
+    2. Checks if the adjustment applies (region, date, store, item filters)
+    3. Applies the multiplier to forecast_average
+    4. Tracks the adjustment in type-specific fields
+    5. Stops after first matching adjustment per type (priority order)
+    
+    Args:
+        row: Item-store data dictionary with forecast_average
+        current_date: Current forecast date
+        adjustments_list: Optional custom adjustment list (defaults to ADJUSTMENTS)
+        
+    Returns:
+        Updated row with adjustments applied and tracked
+    """
+    if adjustments_list is None:
+        adjustments_list = ADJUSTMENTS
+    
+    # Initialize tracking fields
+    row = initialize_adjustment_tracking_fields(row)
+    
+    # Track which adjustment types have been applied (one per type)
+    applied_types = set()
+    
+    # Get row attributes for filtering
+    region = row.get('region_code')
+    store_no = int(row.get('store_no', 0))
+    item_no = int(row.get('item_no', 0))
+    
+    # Track pre-adjustment value
+    pre_adjustment = row.get('forecast_average', 0) or 0
+    
+    # Process each adjustment in order
+    for adj in adjustments_list:
+        adj_type = adj['type']
+        
+        # Skip if we've already applied an adjustment of this type
+        if adj_type in applied_types:
+            continue
+        
+        # Check if adjustment applies to this row
+        if not _adjustment_matches(adj, region, store_no, item_no, current_date):
+            continue
+        
+        # Apply the adjustment
+        multiplier = adj['multiplier']
+        row['forecast_average'] *= multiplier
+        
+        # Track the adjustment by type
+        prefix = adj_type.value
+        row[f'{prefix}_adj_applied'] = 1
+        row[f'{prefix}_adj_name'] = adj['name']
+        row[f'{prefix}_adj_multiplier'] = multiplier
+        row[f'{prefix}_adj_qty'] = row['forecast_average'] - pre_adjustment
+        
+        # Update pre_adjustment for next adjustment
+        pre_adjustment = row['forecast_average']
+        
+        # Mark this type as applied
+        applied_types.add(adj_type)
+        
+        # Also populate legacy fields for backward compatibility
+        if adj_type == AdjustmentType.PROMO:
+            row['promo_uplift_applied'] = 1
+            row['promo_uplift_name'] = adj['name']
+            row['promo_uplift_multiplier'] = multiplier
+            row['promo_uplift_qty'] = row[f'{prefix}_adj_qty']
+        elif adj_type in (AdjustmentType.HOLIDAY_INCREASE, AdjustmentType.CANNIBALISM):
+            row['holiday_adj_applied'] = 1
+            row['holiday_adj_name'] = adj['name']
+            row['holiday_adj_multiplier'] = multiplier
+            row['holiday_adj_qty'] = row[f'{prefix}_adj_qty']
+            if adj_type == AdjustmentType.CANNIBALISM:
+                row['cannibalism_adj_applied'] = 1
+                row['cannibalism_adj_qty'] = row[f'{prefix}_adj_qty']
+    
+    return row
+
+
+def _adjustment_matches(adj: dict, region: str, store_no: int, 
+                       item_no: int, current_date: datetime) -> bool:
+    """
+    Check if an adjustment applies to a specific row.
+    
+    Args:
+        adj: Adjustment configuration dictionary
+        region: Region code
+        store_no: Store number
+        item_no: Item number
+        current_date: Current forecast date
+        
+    Returns:
+        True if adjustment should be applied to this row
+    """
+    # Check date range
+    if not (adj['start_date'] <= current_date <= adj['end_date']):
+        return False
+    
+    # Check region filter (None means all regions)
+    if 'regions' in adj and adj['regions'] is not None:
+        if region not in adj['regions']:
+            return False
+    
+    # Check store filter (if specified)
+    if 'stores' in adj and adj['stores'] is not None:
+        if store_no not in adj['stores']:
+            return False
+    
+    # Check item filter (if specified)
+    if 'items' in adj and adj['items'] is not None:
+        if item_no not in adj['items']:
+            return False
+    
+    return True
+
 
 def apply_region_base_cover(row: dict, current_date: datetime, 
                             base_cover: float, base_cover_sold_out: float) -> tuple:
@@ -127,56 +477,6 @@ def apply_region_base_cover(row: dict, current_date: datetime,
             base_cover_sold_out = 0.04
     
     return base_cover, base_cover_sold_out
-
-
-def apply_promotional_adjustments(row: dict, current_date: datetime) -> dict:
-    """
-    Apply promotional uplift adjustments to forecast.
-    
-    Args:
-        row: Item-store data dictionary with forecast_average
-        current_date: Current forecast date
-        
-    Returns:
-        Updated row with promotional adjustments applied
-    """
-    region = row.get('region_code')
-    
-    # Apply standard promotions
-    for promo in PROMOTIONS:
-        if region in promo['regions']:
-            if promo['start_date'] <= current_date <= promo['end_date']:
-                row['forecast_average'] *= promo['multiplier']
-    
-    return row
-
-
-def apply_holiday_adjustments(row: dict, current_date: datetime) -> dict:
-    """
-    Apply holiday-specific adjustments (Thanksgiving, etc.).
-    
-    Args:
-        row: Item-store data dictionary with forecast_average
-        current_date: Current forecast date
-        
-    Returns:
-        Updated row with holiday adjustments applied
-    """
-    region = row.get('region_code')
-    
-    # Apply Thanksgiving adjustments
-    for adj in THANKSGIVING_ADJUSTMENTS:
-        if region in adj['regions']:
-            if adj['start_date'] <= current_date <= adj['end_date']:
-                row['forecast_average'] *= adj['multiplier']
-    
-    # Apply December adjustments
-    for adj in DECEMBER_ADJUSTMENTS:
-        if region in adj['regions']:
-            if adj['start_date'] <= current_date <= adj['end_date']:
-                row['forecast_average'] *= adj['multiplier']
-    
-    return row
 
 
 def apply_store_specific_adjustments(row: dict, current_date: datetime) -> dict:
@@ -334,11 +634,10 @@ def apply_all_adjustments(row: dict, current_date: datetime,
     
     Order of operations:
     1. Region base cover adjustments
-    2. Promotional uplifts
-    3. Holiday adjustments
-    4. Store-specific adjustments
-    5. Item-specific adjustments
-    6. Weather-based adjustments
+    2. All configured adjustments (promotions, holidays, cannibalism, adhoc, etc.)
+    3. Store-specific adjustments
+    4. Item-specific adjustments
+    5. Weather-based adjustments
     
     Args:
         row: Item-store data dictionary with base forecast
@@ -356,11 +655,8 @@ def apply_all_adjustments(row: dict, current_date: datetime,
     row['base_cover'] = adj_base_cover
     row['base_cover_sold_out'] = adj_base_cover_sold_out
     
-    # Apply promotional uplifts
-    row = apply_promotional_adjustments(row, current_date)
-    
-    # Apply holiday adjustments
-    row = apply_holiday_adjustments(row, current_date)
+    # Apply all configured adjustments (promotions, holidays, cannibalism, etc.)
+    row = apply_adjustments(row, current_date)
     
     # Apply store-specific adjustments
     row = apply_store_specific_adjustments(row, current_date)
@@ -381,22 +677,18 @@ def apply_all_adjustments(row: dict, current_date: datetime,
 # adjustments, to ensure store-level shrink and coverage targets are met.
 
 # Store-level shrink pass logic:
-# - Reduces forecast for stores where expected shrink > threshold (15%)
-# - PROTECTS sold-out items from reduction (they need more inventory)
-# - Adjusts ALL other items starting from highest coverage
+# - Reduces forecast for stores where expected shrink > threshold (20%)
+# - Adjusts ALL items (not just non-hero items) starting from highest coverage
 # - Prioritizes items with highest coverage (most over-forecasted relative to avg)
 # - Maintains minimum 1 case per item to ensure store availability
 
 # Store-level pass thresholds
-STORE_SHRINK_THRESHOLD = 0.15  # 15% - max acceptable forecast shrink at store level
+STORE_SHRINK_THRESHOLD = 0.15  # 15% - max acceptable forecast shrink at store level (reduced from 20%)
 STORE_MIN_COVERAGE = 0.00      # 0% - minimum coverage required (trigger for increase)
 
 # Reasonability thresholds - prevent over-forecasting beyond historical patterns
 STORE_MAX_VS_HISTORICAL_THRESHOLD = 0.10  # 10% - max allowed above highest week in last 4 weeks
 ITEM_HISTORICAL_CAP_ENABLED = True  # Prioritize items forecasted above their historical max
-
-# Coverage threshold for bump-ups - don't bump if already at high coverage
-MAX_COVERAGE_FOR_BUMP_UP = 0.20  # 20% - don't bump items already at >20% coverage
 
 
 def calculate_store_level_metrics(indexed_rows: List[Tuple[int, dict]]) -> Tuple[float, float, float, float]:
@@ -490,7 +782,6 @@ def calculate_item_historical_cap(row: dict) -> dict:
     
     Identifies if an item is being forecasted above its historical maximum,
     which indicates potential over-forecasting that should be prioritized for reduction.
-    Note: Sold-out items are NEVER flagged as exceeding historical max to protect them.
     
     Args:
         row: Item-store data dictionary
@@ -500,15 +791,13 @@ def calculate_item_historical_cap(row: dict) -> dict:
         - item_max_4w: Max sales in last 4 weeks
         - item_avg_4w: Average non-zero sales in last 4 weeks
         - forecast_vs_max_ratio: forecast_qty / max_4w (values > 1 = over historical max)
-        - exceeds_historical_max: Boolean flag (False for sold-out items)
-        - sold_out_lw: Whether item was sold out last week
+        - exceeds_historical_max: Boolean flag
     """
     w1_sold = row.get('w1_sold', 0) or 0
     w2_sold = row.get('w2_sold', 0) or 0
     w3_sold = row.get('w3_sold', 0) or 0
     w4_sold = row.get('w4_sold', 0) or 0
     forecast_qty = row.get('forecast_quantity', 0) or 0
-    sold_out_lw = row.get('sold_out_lw', 0)
     
     weekly_sales = [w1_sold, w2_sold, w3_sold, w4_sold]
     non_zero_weeks = [w for w in weekly_sales if w > 0]
@@ -523,16 +812,11 @@ def calculate_item_historical_cap(row: dict) -> dict:
         # No historical sales - can't determine if exceeding
         forecast_vs_max_ratio = 1.0
     
-    # Sold-out items are NEVER flagged as exceeding historical max
-    # This protects them from being reduced in store-level pass
-    exceeds_historical = forecast_vs_max_ratio > 1.0 and not sold_out_lw
-    
     return {
         'item_max_4w': item_max_4w,
         'item_avg_4w': item_avg_4w,
         'forecast_vs_max_ratio': forecast_vs_max_ratio,
-        'exceeds_historical_max': exceeds_historical,
-        'sold_out_lw': sold_out_lw
+        'exceeds_historical_max': forecast_vs_max_ratio > 1.0
     }
 
 
@@ -553,10 +837,9 @@ def apply_store_level_shrink_pass(
     4. Applies TWO controls:
        a) Shrink threshold: If shrink % > threshold (default 15%), reduce items
        b) Historical reasonability: If forecast > max_4w * (1 + historical_threshold), reduce
-    5. PROTECTS sold-out items from reduction (they need more inventory)
-    6. PRIORITIZES items exceeding their historical max first (never sold this much)
-    7. Then prioritizes by coverage (most over-forecasted)
-    8. Maintains minimum 1 case per item
+    5. PRIORITIZES items exceeding their historical max first (never sold this much)
+    6. Then prioritizes by coverage (most over-forecasted)
+    7. Maintains minimum 1 case per item
     
     Args:
         forecast_results: List of forecast result dictionaries
@@ -575,7 +858,6 @@ def apply_store_level_shrink_pass(
         print(f"Shrink threshold: {shrink_threshold:.0%}")
         print(f"Historical max threshold: +{historical_threshold:.0%}")
         print(f"Item historical cap enabled: {use_historical_cap}")
-        print("Sold-out items: PROTECTED (will not be reduced)")
     
     # Group results by store-date
     store_date_groups = {}
@@ -596,7 +878,6 @@ def apply_store_level_shrink_pass(
         'stores_adjusted_historical': 0,
         'items_adjusted': 0,
         'items_exceeding_historical': 0,
-        'items_protected_sold_out': 0,
         'total_cases_reduced': 0,
         'total_units_reduced': 0,
     }
@@ -611,10 +892,10 @@ def apply_store_level_shrink_pass(
         for idx, row in indexed_rows:
             row['forecast_qty_pre_store_pass'] = row.get('forecast_quantity', 0)
             row['store_level_adjustment_qty'] = 0
+            row['store_level_decline_qty'] = 0.0  # Reduction due to shrink control (stored as negative)
+            row['store_level_growth_qty'] = 0.0   # Increase due to coverage (stored as positive)
             row['store_level_adjustment_reason'] = ''
             row['store_level_adjusted'] = 0
-            row['store_level_growth_qty'] = 0.0   # Track increases (waterfall)
-            row['store_level_decline_qty'] = 0.0  # Track reductions (waterfall)
             
             # Calculate item historical metrics
             item_hist = calculate_item_historical_cap(row)
@@ -663,10 +944,6 @@ def apply_store_level_shrink_pass(
         items_over_historical = sum(1 for _, r in indexed_rows if r.get('exceeds_historical_max', False))
         stats['items_exceeding_historical'] += items_over_historical
         
-        # Count sold-out items that are protected from reduction
-        sold_out_items = sum(1 for _, r in indexed_rows if r.get('sold_out_lw', 0))
-        stats['items_protected_sold_out'] += sold_out_items
-        
         if verbose:
             print(f"\n  Store {store_no} | {date_forecast}")
             print(f"    Initial shrink: {store_shrink_pct:.1%} (threshold: {shrink_threshold:.0%})")
@@ -677,8 +954,6 @@ def apply_store_level_shrink_pass(
                 print(f"    ⚠️  EXCEEDS HISTORICAL by {historical_overage_pct:.1%}")
             if items_over_historical > 0:
                 print(f"    ⚠️  {items_over_historical} items exceed their historical max")
-            if sold_out_items > 0:
-                print(f"    🛡️  {sold_out_items} sold-out items PROTECTED from reduction")
         
         # Iteratively reduce items until BOTH checks pass
         iteration = 0
@@ -688,7 +963,7 @@ def apply_store_level_shrink_pass(
         while (store_shrink_pct > shrink_threshold or total_forecast > historical_cap) and iteration < max_iterations:
             iteration += 1
             
-            # Find ALL items that can be reduced (excluding sold-out items)
+            # Find ALL items that can be reduced
             reducible_items = []
             for idx, row in indexed_rows:
                 item_no = int(row.get('item_no', 0))
@@ -696,16 +971,14 @@ def apply_store_level_shrink_pass(
                 forecast_avg = row.get('forecast_average', 0) or 0
                 case_pack_size = row.get('case_pack_size', 6) or 6
                 current_cases = forecast_qty / case_pack_size if case_pack_size > 0 else 0
-                sold_out_lw = row.get('sold_out_lw', 0)
                 
                 # Calculate what forecast would be after removing 1 case
                 forecast_after_reduction = forecast_qty - case_pack_size
                 
                 # Only reduce items if:
-                # 1. NOT sold out last week (protect sold-out items - they need more inventory)
-                # 2. At least 2 cases (keep minimum 1 case)
-                # 3. After reduction, forecast >= forecast_average (expected shrink >= 0%)
-                if not sold_out_lw and current_cases >= 2 and forecast_after_reduction >= forecast_avg:
+                # 1. At least 2 cases (keep minimum 1 case)
+                # 2. After reduction, forecast >= forecast_average (expected shrink >= 0%)
+                if current_cases >= 2 and forecast_after_reduction >= forecast_avg:
                     # Calculate coverage (forecast / average) - higher = more over-forecasted
                     coverage = forecast_qty / forecast_avg if forecast_avg > 0 else 1.0
                     
@@ -761,8 +1034,8 @@ def apply_store_level_shrink_pass(
             # Apply reduction
             top_item['row']['forecast_quantity'] -= case_size
             top_item['row']['store_level_adjustment_qty'] += case_size
+            top_item['row']['store_level_decline_qty'] -= case_size  # Negative = decline/reduction
             top_item['row']['store_level_adjusted'] = 1
-            top_item['row']['store_level_decline_qty'] -= case_size  # Track as negative for waterfall
             
             total_reduced += case_size
             
@@ -820,7 +1093,6 @@ def apply_store_level_shrink_pass(
         print(f"    - Due to shrink threshold: {stats['stores_adjusted_shrink']}")
         print(f"    - Due to historical cap: {stats['stores_adjusted_historical']}")
         print(f"  Items exceeding historical max: {stats['items_exceeding_historical']}")
-        print(f"  Items protected (sold out): {stats['items_protected_sold_out']}")
         print(f"  Items adjusted: {stats['items_adjusted']}")
         print(f"  Total units reduced: {stats['total_units_reduced']}")
         print(f"  Total cases reduced: {stats['total_cases_reduced']}")
@@ -831,7 +1103,6 @@ def apply_store_level_shrink_pass(
 def apply_store_level_coverage_pass(
     forecast_results: List[dict],
     min_coverage: float = STORE_MIN_COVERAGE,
-    max_coverage_for_bump: float = MAX_COVERAGE_FOR_BUMP_UP,
     verbose: bool = True
 ) -> List[dict]:
     """
@@ -840,16 +1111,11 @@ def apply_store_level_coverage_pass(
     This function:
     1. Groups forecasts by store-date
     2. Identifies items with 0% coverage (forecast_qty = 0)
-    3. Increases the item with highest demand by 1 case to ensure some coverage
-    4. Applies practical constraints for bump-ups:
-       - Skip sold-out items (they already have favorable adjustments - no double bump)
-       - Skip items if bump would result in >20% coverage
-       - Skip items if bump would exceed historical max
+    3. Increases the item with lowest coverage by 1 case to ensure some coverage
     
     Args:
         forecast_results: List of forecast result dictionaries
         min_coverage: Minimum coverage threshold (default 0% - only add when no coverage)
-        max_coverage_for_bump: Max coverage % before skipping item for bump (default 20%)
         verbose: Print detailed adjustment information
         
     Returns:
@@ -860,8 +1126,6 @@ def apply_store_level_coverage_pass(
         print("STORE-LEVEL COVERAGE PASS")
         print("=" * 60)
         print(f"Min coverage threshold: {min_coverage:.0%}")
-        print(f"Max coverage for bump-up: {1 + max_coverage_for_bump:.0%}")
-        print("Sold-out items: SKIPPED (already have favorable adjustments)")
     
     # Group results by store-date
     store_date_groups = {}
@@ -879,9 +1143,6 @@ def apply_store_level_coverage_pass(
         'stores_evaluated': 0,
         'stores_adjusted': 0,
         'items_adjusted': 0,
-        'items_skipped_sold_out': 0,
-        'items_skipped_high_coverage': 0,
-        'items_skipped_exceeds_historical': 0,
         'total_cases_added': 0,
         'total_units_added': 0,
     }
@@ -899,37 +1160,14 @@ def apply_store_level_coverage_pass(
             forecast_qty = row.get('forecast_quantity', 0) or 0
             forecast_avg = row.get('forecast_average', 0) or 0
             case_pack_size = row.get('case_pack_size', 6) or 6
-            sold_out_lw = row.get('sold_out_lw', 0)
             
             # Item has demand (forecast_avg > 0) but no forecast quantity
             if forecast_qty == 0 and forecast_avg > 0:
-                # SKIP sold-out items entirely - they already got favorable treatment
-                # (no round-down, higher base cover, skip guardrail) so no need for double bump
-                if sold_out_lw:
-                    stats['items_skipped_sold_out'] += 1
-                    continue
-                
-                # Calculate item historical metrics for reasonability check
-                item_hist = calculate_item_historical_cap(row)
-                item_max_4w = item_hist.get('item_max_4w', 0) or forecast_avg
-                
-                # Calculate what coverage would be after adding 1 case
-                forecast_after_bump = forecast_qty + case_pack_size
-                coverage_after_bump = forecast_after_bump / forecast_avg if forecast_avg > 0 else 0
-                exceeds_max_after_bump = forecast_after_bump > item_max_4w if item_max_4w > 0 else False
-                
-                # Apply practical constraints for bump-ups
-                if coverage_after_bump > (1 + max_coverage_for_bump):
-                    stats['items_skipped_high_coverage'] += 1
-                    continue
-                if exceeds_max_after_bump:
-                    stats['items_skipped_exceeds_historical'] += 1
-                    continue
-                
+                item_coverage = 0
                 zero_coverage_items.append({
                     'idx': idx,
                     'row': row,
-                    'coverage': 0,
+                    'coverage': item_coverage,
                     'case_pack_size': case_pack_size,
                     'forecast_avg': forecast_avg
                 })
@@ -943,7 +1181,7 @@ def apply_store_level_coverage_pass(
         
         if verbose:
             print(f"\n  Store {store_no} | {date_forecast}")
-            print(f"    Found {len(zero_coverage_items)} eligible items for bump-up (0% coverage, not sold-out)")
+            print(f"    Found {len(zero_coverage_items)} items with 0% coverage")
         
         # Increase the highest demand item with 0% coverage by 1 case
         top_item = zero_coverage_items[0]
@@ -952,9 +1190,10 @@ def apply_store_level_coverage_pass(
         # Apply increase
         top_item['row']['forecast_quantity'] = (top_item['row'].get('forecast_quantity', 0) or 0) + case_size
         
-        # Track adjustment - negative value indicates increase
+        # Track adjustment - negative value indicates increase for legacy field
         current_adj = top_item['row'].get('store_level_adjustment_qty', 0) or 0
         top_item['row']['store_level_adjustment_qty'] = current_adj - case_size  # Negative = increase
+        top_item['row']['store_level_growth_qty'] = (top_item['row'].get('store_level_growth_qty', 0) or 0) + case_size  # Positive = growth
         top_item['row']['store_level_adjusted'] = 1
         
         # Update reason
@@ -980,9 +1219,6 @@ def apply_store_level_coverage_pass(
         print(f"  Stores evaluated: {stats['stores_evaluated']}")
         print(f"  Stores adjusted: {stats['stores_adjusted']}")
         print(f"  Items adjusted: {stats['items_adjusted']}")
-        print(f"  Items skipped (sold out - already adjusted): {stats['items_skipped_sold_out']}")
-        print(f"  Items skipped (high coverage): {stats['items_skipped_high_coverage']}")
-        print(f"  Items skipped (exceeds historical): {stats['items_skipped_exceeds_historical']}")
         print(f"  Total units added: {stats['total_units_added']}")
         print(f"  Total cases added: {stats['total_cases_added']}")
     
@@ -992,35 +1228,27 @@ def apply_store_level_coverage_pass(
 def apply_store_level_pass(
     forecast_results: List[dict],
     shrink_threshold: float = STORE_SHRINK_THRESHOLD,
-    historical_threshold: float = STORE_MAX_VS_HISTORICAL_THRESHOLD,
-    use_historical_cap: bool = ITEM_HISTORICAL_CAP_ENABLED,
     verbose: bool = True
 ) -> List[dict]:
     """
-    Apply complete store-level pass with enhanced reasonability checks.
+    Apply complete store-level pass including shrink reduction and coverage increase.
     
     This is the main entry point that:
-    1. First applies enhanced shrink pass to reduce high-shrink stores
-       - Uses BOTH shrink threshold AND historical reasonability
-       - Prioritizes items exceeding their historical max
+    1. First applies shrink pass to reduce high-shrink stores
     2. Then applies coverage pass to add items for 0% coverage stores
     
     Args:
         forecast_results: List of forecast result dictionaries
-        shrink_threshold: Maximum acceptable store-level shrink percentage (default 0.15)
-        historical_threshold: Max % allowed above store's historical max (default 0.10)
-        use_historical_cap: Whether to prioritize items exceeding historical max
+        shrink_threshold: Maximum acceptable store-level shrink percentage (default 0.20)
         verbose: Print detailed adjustment information
         
     Returns:
         Updated forecast results with store-level adjustments applied
     """
-    # Step 1: Apply enhanced shrink pass with historical reasonability
+    # Step 1: Apply shrink pass (reduce NON_HERO items if store shrink > threshold)
     forecast_results = apply_store_level_shrink_pass(
         forecast_results, 
         shrink_threshold=shrink_threshold,
-        historical_threshold=historical_threshold,
-        use_historical_cap=use_historical_cap,
         verbose=verbose
     )
     

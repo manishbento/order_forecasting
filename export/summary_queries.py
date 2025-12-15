@@ -519,26 +519,39 @@ def get_weather_summary_by_date_query(region: str, start_date: str, end_date: st
             strftime(date_forecast, '%A') AS "Day",
             COUNT(DISTINCT store_no) AS "Store Count",
             
-            SUM(CASE WHEN weather_severity_category = 'SEVERE' THEN 1 ELSE 0 END) AS "Severe",
-            SUM(CASE WHEN weather_severity_category = 'HIGH' THEN 1 ELSE 0 END) AS "High",
-            SUM(CASE WHEN weather_severity_category = 'MODERATE' THEN 1 ELSE 0 END) AS "Moderate",
-            SUM(CASE WHEN weather_severity_category = 'LOW' THEN 1 ELSE 0 END) AS "Low",
-            SUM(CASE WHEN weather_severity_category = 'MINIMAL' OR weather_severity_category IS NULL THEN 1 ELSE 0 END) AS "Minimal",
+            -- Severity category distribution
+            COUNT(DISTINCT CASE WHEN weather_severity_category = 'SEVERE' THEN store_no END) AS "Severe",
+            COUNT(DISTINCT CASE WHEN weather_severity_category = 'HIGH' THEN store_no END) AS "High",
+            COUNT(DISTINCT CASE WHEN weather_severity_category = 'MODERATE' THEN store_no END) AS "Moderate",
+            COUNT(DISTINCT CASE WHEN weather_severity_category = 'LOW' THEN store_no END) AS "Low",
+            COUNT(DISTINCT CASE WHEN weather_severity_category = 'MINIMAL' OR weather_severity_category IS NULL THEN store_no END) AS "Minimal",
             
+            -- Severity scores
             ROUND(AVG(COALESCE(weather_severity_score, 0)), 2) AS "Avg Severity",
             ROUND(MAX(COALESCE(weather_severity_score, 0)), 2) AS "Max Severity",
             ROUND(AVG(COALESCE(weather_sales_impact_factor, 1.0)), 3) AS "Avg Impact Factor",
             ROUND(MIN(COALESCE(weather_sales_impact_factor, 1.0)), 3) AS "Min Impact Factor",
             
+            -- Temperatures
             ROUND(AVG(weather_temp_min), 1) AS "Avg Temp Min",
             ROUND(AVG(weather_temp_max), 1) AS "Avg Temp Max",
             ROUND(MIN(weather_temp_min), 1) AS "Coldest Temp",
             ROUND(MAX(weather_temp_max), 1) AS "Warmest Temp",
             
-            SUM(CASE WHEN COALESCE(weather_total_rain_expected, 0) > 0.1 THEN 1 ELSE 0 END) AS "Stores w/ Rain",
-            SUM(CASE WHEN COALESCE(weather_snow_amount, 0) > 0 THEN 1 ELSE 0 END) AS "Stores w/ Snow",
-            ROUND(AVG(CASE WHEN COALESCE(weather_snow_amount, 0) > 0 THEN weather_snow_amount END), 1) AS "Avg Snow Depth",
+            -- Precipitation counts with actual precip probability
+            COUNT(DISTINCT CASE WHEN COALESCE(weather_precip_probability, 0) > 50 THEN store_no END) AS "Stores w/ Rain Likely",
+            COUNT(DISTINCT CASE WHEN COALESCE(weather_total_rain_expected, 0) > 0.1 THEN store_no END) AS "Stores w/ Rain",
+            COUNT(DISTINCT CASE WHEN COALESCE(weather_snow_amount, 0) > 0 THEN store_no END) AS "Stores w/ Snow",
+            COUNT(DISTINCT CASE WHEN COALESCE(weather_snow_depth, 0) > 2 THEN store_no END) AS "Stores w/ Snow Depth > 2in",
             
+            -- Average metrics for stores with precipitation
+            ROUND(AVG(CASE WHEN COALESCE(weather_total_rain_expected, 0) > 0 THEN weather_total_rain_expected END), 2) AS "Avg Rain",
+            ROUND(AVG(CASE WHEN COALESCE(weather_snow_amount, 0) > 0 THEN weather_snow_amount END), 1) AS "Avg Snow",
+            ROUND(AVG(CASE WHEN COALESCE(weather_snow_depth, 0) > 0 THEN weather_snow_depth END), 1) AS "Avg Snow Depth",
+            ROUND(AVG(COALESCE(weather_wind_speed, 0)), 1) AS "Avg Wind",
+            ROUND(MAX(COALESCE(weather_wind_gust, 0)), 1) AS "Max Wind Gust",
+            
+            -- Adjustments
             COALESCE(SUM(COALESCE(weather_adjustment_qty, 0)), 0) AS "Total Qty Adj",
             COALESCE(SUM(CASE WHEN weather_adjusted = 1 THEN 1 ELSE 0 END), 0) AS "Total Items Adj"
             
@@ -567,16 +580,32 @@ def get_weather_store_detail_query(region: str, start_date: str, end_date: str) 
             fr.weather_day_condition AS "Conditions",
             ROUND(fr.weather_temp_min, 1) AS "Temp Min",
             ROUND(fr.weather_temp_max, 1) AS "Temp Max",
+            -- Precipitation details
             ROUND(COALESCE(fr.weather_total_rain_expected, 0), 2) AS "Precip (in)",
-            ROUND(COALESCE(fr.weather_total_rain_expected, 0) * 100, 1) AS "Precip %",
+            ROUND(COALESCE(fr.weather_precip_probability, 0), 0) AS "Precip %",
+            ROUND(COALESCE(fr.weather_precip_cover, 0), 0) AS "Precip Cover %",
+            -- Snow details
             ROUND(COALESCE(fr.weather_snow_amount, 0), 1) AS "Snow (in)",
-            ROUND(COALESCE(fr.weather_snow_amount, 0), 1) AS "Snow Depth",
+            ROUND(COALESCE(fr.weather_snow_depth, 0), 1) AS "Snow Depth",
+            -- Wind details
             ROUND(COALESCE(fr.weather_wind_speed, 0), 1) AS "Wind (mph)",
+            ROUND(COALESCE(fr.weather_wind_gust, 0), 1) AS "Wind Gust",
+            -- Visibility and atmosphere
             ROUND(COALESCE(fr.weather_visibility, 10), 1) AS "Visibility",
+            ROUND(COALESCE(fr.weather_humidity, 0), 0) AS "Humidity %",
+            ROUND(COALESCE(fr.weather_cloud_cover, 0), 0) AS "Cloud Cover %",
             ROUND(COALESCE(fr.weather_severe_risk, 0), 0) AS "Severe Risk",
+            -- Component severity scores
+            ROUND(COALESCE(fr.weather_rain_severity, 0), 2) AS "Rain Sev",
+            ROUND(COALESCE(fr.weather_snow_severity, 0), 2) AS "Snow Sev",
+            ROUND(COALESCE(fr.weather_wind_severity, 0), 2) AS "Wind Sev",
+            ROUND(COALESCE(fr.weather_visibility_severity, 0), 2) AS "Vis Sev",
+            ROUND(COALESCE(fr.weather_temp_severity, 0), 2) AS "Temp Sev",
+            -- Final severity metrics
             ROUND(COALESCE(fr.weather_severity_score, 0), 2) AS "Severity Score",
             COALESCE(fr.weather_severity_category, 'MINIMAL') AS "Category",
             ROUND(COALESCE(fr.weather_sales_impact_factor, 1.0), 3) AS "Impact Factor",
+            -- Adjustments
             COALESCE(SUM(fr.weather_adjustment_qty), 0) AS "Qty Adjusted",
             COALESCE(SUM(CASE WHEN fr.weather_adjusted = 1 THEN 1 ELSE 0 END), 0) AS "Items Adj"
         FROM forecast_results fr
@@ -588,8 +617,12 @@ def get_weather_store_detail_query(region: str, start_date: str, end_date: str) 
         GROUP BY 
             fr.date_forecast, fr.store_no, nm.store_name,
             fr.weather_day_condition, fr.weather_temp_min, fr.weather_temp_max,
-            fr.weather_total_rain_expected, fr.weather_snow_amount,
-            fr.weather_wind_speed, fr.weather_visibility, fr.weather_severe_risk,
+            fr.weather_total_rain_expected, fr.weather_precip_probability, fr.weather_precip_cover,
+            fr.weather_snow_amount, fr.weather_snow_depth,
+            fr.weather_wind_speed, fr.weather_wind_gust, fr.weather_visibility,
+            fr.weather_humidity, fr.weather_cloud_cover, fr.weather_severe_risk,
+            fr.weather_rain_severity, fr.weather_snow_severity, fr.weather_wind_severity,
+            fr.weather_visibility_severity, fr.weather_temp_severity,
             fr.weather_severity_score, fr.weather_severity_category,
             fr.weather_sales_impact_factor
         ORDER BY 

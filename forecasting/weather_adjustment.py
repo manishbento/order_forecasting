@@ -1,25 +1,34 @@
 """
 Weather-Based Forecast Adjustment Module
 ========================================
-Applies weather severity adjustments to forecasted quantities.
+Applies weather severity adjustments to forecasted quantities at the STORE level.
 
 This module is executed as a separate step in the forecasting pipeline,
 AFTER the base forecast is calculated. It adjusts quantities based on:
 
-1. Weather severity score from VisualCrossing
-2. Forecast shrink metrics (forecast_shrink_last_week_sales, forecast_shrink_average)
-   - Higher shrink = more room for reduction = higher priority
-3. Iterative case-by-case reduction across items
-   - Each pass reduces 1 case from highest priority items
-   - Multiple passes until weather impact target is met or no more reductions possible
+1. Weather severity score from VisualCrossing (threshold >= 4.0)
+2. Store-level target reduction based on expected sales impact
+3. Item prioritization: Non-hero items first, then by forecast coverage
+4. Iterative case-by-case reduction across prioritized items
+5. GUARANTEE: Minimum 1 item × 1 case reduction when severity > 4
 
 The adjustment process:
 1. Identify store-days with significant weather impact (severity >= threshold)
-2. For each affected store-day, calculate target reduction based on severity
-3. Prioritize items by forecast_shrink metrics (more shrink room = adjust first)
+2. Calculate STORE-LEVEL target reduction based on severity and sales impact
+3. Prioritize items for reduction:
+   - Non-hero items get higher priority (adjusted first)
+   - Higher forecast coverage items get adjusted before lower coverage
+   - Items with more available cases get more flexibility
 4. Apply reductions iteratively, 1 case at a time per item per pass
-5. Continue until target reduction met or items can't be reduced further
-6. Track pre/post adjustment quantities and reasons for transparency
+5. Multiple passes through all items until target reduction met
+6. GUARANTEE: If severity > 4 and no adjustments made, force 1 case reduction
+7. Track pre/post adjustment quantities and reasons for transparency
+
+Key Changes (v2 - Store-Level Approach):
+- Weather adjustment now runs at store level, not item level
+- Iterative multi-pass reduction across all items
+- Priority: Non-hero items first, then by forecast coverage (high to low)
+- Guarantee: Minimum 1 item × 1 case when severity > 4
 
 Usage:
     from forecasting.weather_adjustment import apply_weather_adjustments
@@ -312,6 +321,221 @@ def recalculate_forecast_shrink_metrics(row: dict) -> dict:
 
 
 # =============================================================================
+# ITEM PRIORITIZATION FOR STORE-LEVEL ADJUSTMENT
+# =============================================================================
+
+def prioritize_items_for_reduction(indexed_rows: List[Tuple[int, dict]]) -> List[Tuple[int, dict, float]]:
+    """
+    Prioritize items for weather reduction at the store level.
+    
+    Priority order (highest to lowest):
+    1. Non-Hero items first (hero_item != 1)
+    2. Higher forecast coverage (forecast_coverage)
+    3. More available cases to reduce
+    
+    Args:
+        indexed_rows: List of (index, row) tuples for a store-date
+        
+    Returns:
+        List of (index, row, priority_score) tuples sorted by priority (highest first)
+    """
+    prioritized = []
+    
+    for idx, row in indexed_rows:
+        forecast_qty = row.get('forecast_quantity', 0) or 0
+        case_pack_size = row.get('case_pack_size', 6) or 6
+        
+        # Check if item can be reduced (need at least 2 cases)
+        current_cases = forecast_qty / case_pack_size
+        can_reduce = current_cases >= 2
+        
+        if not can_reduce or forecast_qty <= 0:
+            # Item cannot be reduced - priority 0
+            prioritized.append((idx, row, 0.0))
+            continue
+        
+        # Hero item flag (1 = hero, 0 or None = non-hero)
+        is_hero = row.get('hero_item', 0) == 1
+        
+        # Forecast coverage (higher = more likely to sell out = reduce with caution)
+        # But we prioritize higher coverage for reduction because we want to prevent overstocking
+        forecast_coverage = row.get('forecast_coverage', 0) or 0
+        
+        # Available cases to reduce (leave minimum 1 case)
+        available_cases = current_cases - 1
+        
+        # Priority calculation:
+        # - Non-hero items get +100 base priority (adjusted first)
+        # - Higher coverage adds to priority (0-50 range based on coverage %)
+        # - More available cases adds flexibility (0-10 range)
+        
+        hero_penalty = 0 if not is_hero else 100  # Hero items get lower priority
+        coverage_score = min(50, forecast_coverage * 50) if forecast_coverage else 0
+        flexibility_score = min(10, available_cases * 2)
+        
+        priority_score = 100 - hero_penalty + coverage_score + flexibility_score
+        
+        prioritized.append((idx, row, priority_score))
+    
+    # Sort by priority (highest first)
+    prioritized.sort(key=lambda x: x[2], reverse=True)
+    
+    return prioritized
+
+
+def apply_store_level_reduction(
+    indexed_rows: List[Tuple[int, dict]],
+    target_reduction_units: float,
+    severity_score: float,
+    severity_category: str,
+    target_reduction_pct: float,
+    verbose: bool = False,
+    store_no: str = '',
+    date_forecast: str = ''
+) -> Tuple[List[Tuple[int, dict]], int, int]:
+    """
+    Apply weather reduction at the store level using iterative multi-pass approach.
+    
+    This function:
+    1. Prioritizes items for reduction (non-hero, high coverage first)
+    2. Iteratively reduces 1 case at a time from highest priority reducible items
+    3. Continues passes until target reduction met or no more reductions possible
+    4. Guarantees minimum 1 item × 1 case reduction when severity > 4
+    
+    Args:
+        indexed_rows: List of (index, row) tuples for a store-date
+        target_reduction_units: Total units to reduce across all items
+        severity_score: Weather severity score
+        severity_category: Weather severity category
+        target_reduction_pct: Target reduction percentage
+        verbose: Print detailed output
+        store_no: Store number for logging
+        date_forecast: Forecast date for logging
+        
+    Returns:
+        Tuple of (updated_rows, items_adjusted, total_cases_reduced)
+    """
+    # Prioritize items for reduction
+    prioritized = prioritize_items_for_reduction(indexed_rows)
+    
+    # Track total reduction achieved
+    total_reduced_units = 0
+    total_cases_reduced = 0
+    items_adjusted = 0
+    items_with_adjustment = set()
+    
+    # Create lookup for easy row access
+    row_lookup = {idx: row for idx, row, _ in prioritized}
+    
+    # Track reduction per item
+    reduction_per_item = {idx: 0 for idx, _, _ in prioritized}
+    
+    # Iterative multi-pass reduction
+    max_passes = 50  # Safety limit
+    current_pass = 0
+    
+    while total_reduced_units < target_reduction_units and current_pass < max_passes:
+        current_pass += 1
+        made_reduction_this_pass = False
+        
+        for idx, row, priority in prioritized:
+            if priority <= 0:
+                continue  # Skip items that can't be reduced
+                
+            if total_reduced_units >= target_reduction_units:
+                break
+            
+            # Get current state of this item
+            forecast_qty = row.get('forecast_quantity', 0) or 0
+            case_pack_size = row.get('case_pack_size', 6) or 6
+            current_cases = forecast_qty / case_pack_size
+            
+            # Check if we can still reduce this item (keep minimum 1 case)
+            if current_cases < 2:
+                continue
+            
+            # Reduce by 1 case
+            reduction_units = case_pack_size
+            row['forecast_quantity'] = forecast_qty - reduction_units
+            
+            total_reduced_units += reduction_units
+            total_cases_reduced += 1
+            reduction_per_item[idx] += reduction_units
+            items_with_adjustment.add(idx)
+            made_reduction_this_pass = True
+        
+        if not made_reduction_this_pass:
+            break  # No more reductions possible
+    
+    # GUARANTEE: If severity > 4 and no adjustments made, force minimum 1 item × 1 case
+    if severity_score > 4 and total_cases_reduced == 0:
+        # Find any item with at least 2 cases to reduce
+        for idx, row, priority in prioritized:
+            forecast_qty = row.get('forecast_quantity', 0) or 0
+            case_pack_size = row.get('case_pack_size', 6) or 6
+            current_cases = forecast_qty / case_pack_size
+            
+            if current_cases >= 2:
+                # Force reduction of 1 case
+                reduction_units = case_pack_size
+                row['forecast_quantity'] = forecast_qty - reduction_units
+                total_reduced_units += reduction_units
+                total_cases_reduced += 1
+                reduction_per_item[idx] += reduction_units
+                items_with_adjustment.add(idx)
+                
+                if verbose:
+                    print(f"    [GUARANTEE] Forced 1 case reduction on item (severity {severity_score:.1f} > 4)")
+                break
+    
+    # Update adjustment tracking on all rows
+    for idx, row, _ in prioritized:
+        reduction = reduction_per_item.get(idx, 0)
+        
+        if reduction > 0:
+            case_pack_size = row.get('case_pack_size', 6) or 6
+            cases_reduced = reduction // case_pack_size
+            
+            # Store as NEGATIVE value for waterfall (reduction = decrease in forecast)
+            row['weather_adjustment_qty'] = -reduction
+            row['weather_adjusted'] = 1
+            row['weather_adjustment_reason'] = (
+                f"Weather severity {severity_score:.1f} ({severity_category}). "
+                f"Reduced {reduction} units ({cases_reduced} case{'s' if cases_reduced > 1 else ''}) "
+                f"based on {target_reduction_pct:.0%} expected sales impact."
+            )
+            
+            # Recalculate shrink metrics after reduction
+            recalculate_forecast_shrink_metrics(row)
+            items_adjusted += 1
+        else:
+            # No adjustment for this item - explain why
+            forecast_qty = row.get('forecast_qty_pre_weather', 0) or 0
+            case_pack_size = row.get('case_pack_size', 6) or 6
+            current_cases = forecast_qty / case_pack_size
+            
+            if severity_score >= 4:
+                if current_cases < 2:
+                    row['weather_adjustment_reason'] = (
+                        f"Severity {severity_score:.1f} ({severity_category}). "
+                        f"No reduction: Only {current_cases:.1f} cases - need minimum 2 cases to reduce."
+                    )
+                else:
+                    row['weather_adjustment_reason'] = (
+                        f"Severity {severity_score:.1f} ({severity_category}). "
+                        f"Target reduction met by other items in store."
+                    )
+        
+        # Update weather status indicator
+        row['weather_status_indicator'] = build_weather_status_indicator(row)
+    
+    # Convert back to list format
+    result_rows = [(idx, row_lookup[idx]) for idx, _, _ in prioritized]
+    
+    return result_rows, items_adjusted, total_cases_reduced
+
+
+# =============================================================================
 # MAIN ADJUSTMENT FUNCTIONS
 # =============================================================================
 
@@ -324,17 +548,16 @@ def apply_weather_adjustments(
     **kwargs  # Accept but ignore legacy parameters like min_shrink_headroom
 ) -> List[dict]:
     """
-    Apply weather-based adjustments to forecast results.
+    Apply weather-based adjustments to forecast results at the STORE level.
     
-    Weather adjustments are based purely on weather severity and expected sales impact.
-    When weather is bad, customers don't come - this is independent of shrink metrics.
-    
-    This method:
+    This is a store-level adjustment approach:
     1. Groups forecasts by store-date
-    2. For stores with significant weather (severity >= threshold), calculates target reduction
-    3. Applies proportional reduction across all items based on sales_impact_factor
-    4. Respects case pack sizes (rounds to whole cases)
-    5. Caps total reduction at max_store_reduction_pct
+    2. For stores with significant weather (severity >= threshold), calculates STORE-level target reduction
+    3. Prioritizes items for reduction: non-hero items first, then by forecast coverage
+    4. Applies iterative case-by-case reduction across prioritized items
+    5. GUARANTEES minimum 1 item × 1 case reduction when severity > 4
+    6. Respects case pack sizes (rounds to whole cases)
+    7. Caps total reduction at max_store_reduction_pct
     
     Args:
         forecast_results: List of forecast result dictionaries
@@ -348,10 +571,11 @@ def apply_weather_adjustments(
     """
     if verbose:
         print("\n" + "=" * 60)
-        print("WEATHER ADJUSTMENT MODULE")
+        print("WEATHER ADJUSTMENT MODULE (Store-Level)")
         print("=" * 60)
         print(f"Severity threshold: {severity_threshold}")
         print(f"Max store reduction: {max_store_reduction_pct:.1%}")
+        print("Guarantee: Min 1 item × 1 case when severity > 4")
     
     # Group results by store-date
     store_date_groups = {}
@@ -369,6 +593,7 @@ def apply_weather_adjustments(
         'total_rows': len(forecast_results),
         'stores_evaluated': 0,
         'stores_adjusted': 0,
+        'stores_with_guarantee': 0,
         'items_adjusted': 0,
         'total_cases_reduced': 0,
         'total_units_reduced': 0,
@@ -423,65 +648,52 @@ def apply_weather_adjustments(
         # Target reduction based on weather impact
         weather_reduction_pct = 1.0 - sales_impact_factor
         target_reduction_pct = min(weather_reduction_pct, max_store_reduction_pct)
+        target_reduction_units = total_store_forecast * target_reduction_pct
         
         if verbose and target_reduction_pct > 0:
             print(f"\n  Store {store_no} | {date_forecast}")
             print(f"    Severity: {severity_score:.1f} ({severity_category})")
-            print(f"    Weather impact: {weather_reduction_pct:.1%}, Capped at: {target_reduction_pct:.1%}")
+            print(f"    Total store forecast: {total_store_forecast} units")
+            print(f"    Weather impact: {weather_reduction_pct:.1%}, Target reduction: {target_reduction_units:.0f} units")
         
-        # Apply proportional reduction to each item
-        total_reduced = 0
-        items_adjusted = 0
+        # Apply store-level reduction using prioritized iterative approach
+        updated_rows, items_adjusted, cases_reduced = apply_store_level_reduction(
+            indexed_rows,
+            target_reduction_units,
+            severity_score,
+            severity_category,
+            target_reduction_pct,
+            verbose=verbose,
+            store_no=store_no,
+            date_forecast=date_forecast
+        )
         
-        for idx, row in indexed_rows:
-            forecast_qty = row.get('forecast_quantity', 0) or 0
-            case_pack_size = row.get('case_pack_size', 6) or 6
-            
-            if forecast_qty <= 0:
-                adjusted_results[idx] = row
-                continue
-            
-            # Calculate target reduction for this item
-            target_reduction_units = forecast_qty * target_reduction_pct
-            
-            # Round down to nearest case (we reduce by whole cases)
-            cases_to_reduce = int(target_reduction_units / case_pack_size)
-            actual_reduction = cases_to_reduce * case_pack_size
-            
-            # Ensure we don't reduce below 1 case minimum
-            min_qty = case_pack_size
-            if forecast_qty - actual_reduction < min_qty:
-                actual_reduction = max(0, forecast_qty - min_qty)
-                # Re-round to case size
-                actual_reduction = (actual_reduction // case_pack_size) * case_pack_size
-            
-            if actual_reduction > 0:
-                row['forecast_quantity'] = forecast_qty - actual_reduction
-                row['weather_adjustment_qty'] = actual_reduction
-                row['weather_adjusted'] = 1
-                row['weather_adjustment_reason'] = (
-                    f"Weather severity {severity_score:.1f} ({severity_category}). "
-                    f"Reduced {actual_reduction} units ({actual_reduction // case_pack_size} cases) "
-                    f"based on {target_reduction_pct:.0%} expected sales impact."
-                )
-                
-                # Recalculate shrink metrics after reduction
-                recalculate_forecast_shrink_metrics(row)
-                
-                total_reduced += actual_reduction
-                items_adjusted += 1
-                stats['items_adjusted'] += 1
-                stats['total_units_reduced'] += actual_reduction
-                stats['total_cases_reduced'] += actual_reduction // case_pack_size
-            
-            # Update weather status indicator after adjustment
-            row['weather_status_indicator'] = build_weather_status_indicator(row)
+        # Calculate actual reduction for stats
+        total_reduced = sum(row.get('weather_adjustment_qty', 0) or 0 for _, row in updated_rows)
+        
+        # Store results
+        for idx, row in updated_rows:
             adjusted_results[idx] = row
         
+        # Update stats
         if items_adjusted > 0:
             stats['stores_adjusted'] += 1
+            stats['items_adjusted'] += items_adjusted
+            stats['total_units_reduced'] += total_reduced
+            stats['total_cases_reduced'] += cases_reduced
+            
             if verbose:
-                print(f"    Reduced: {total_reduced} units across {items_adjusted} items")
+                print(f"    Reduced: {total_reduced} units ({cases_reduced} cases) across {items_adjusted} items")
+        elif severity_score > 4 and cases_reduced > 0:
+            # Guarantee was applied
+            stats['stores_with_guarantee'] += 1
+            stats['stores_adjusted'] += 1
+            stats['items_adjusted'] += items_adjusted
+            stats['total_units_reduced'] += total_reduced
+            stats['total_cases_reduced'] += cases_reduced
+            
+            if verbose:
+                print(f"    [GUARANTEE] Reduced: {total_reduced} units ({cases_reduced} cases)")
     
     # Print summary
     if verbose:
@@ -489,6 +701,8 @@ def apply_weather_adjustments(
         print(f"  Total rows: {stats['total_rows']}")
         print(f"  Stores evaluated: {stats['stores_evaluated']}")
         print(f"  Stores adjusted: {stats['stores_adjusted']}")
+        if stats.get('stores_with_guarantee', 0) > 0:
+            print(f"  Stores with guarantee applied: {stats['stores_with_guarantee']}")
         print(f"  Items adjusted: {stats['items_adjusted']}")
         print(f"  Total units reduced: {stats['total_units_reduced']}")
         print(f"  Total cases reduced: {stats['total_cases_reduced']}")

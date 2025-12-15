@@ -33,8 +33,8 @@ CONFIG_FILE_PATH = os.path.join(BASE_DIR, "config_files", "Configuration.xlsx")
 # FORECAST DATE RANGE
 # =============================================================================
 # These define the date range for which forecasts will be generated
-FORECAST_START_DATE_V = datetime(2025, 12, 15)
-FORECAST_END_DATE_V = datetime(2025, 12, 17)
+FORECAST_START_DATE_V = datetime(2025, 12, 18)
+FORECAST_END_DATE_V = datetime(2025, 12, 21)
 
 # String versions for SQL queries
 FORECAST_START_DATE = FORECAST_START_DATE_V.strftime('%Y-%m-%d')
@@ -87,6 +87,10 @@ EXCEPTIONAL_DAYS = [
     {'date': '2025-11-28', 'regions': None, 'comment': 'Thanksgiving - Immediate'},
     {'date': '2025-11-29', 'regions': None, 'comment': 'Thanksgiving - Immediate 2'},
     {'date': '2025-11-30', 'regions': None, 'comment': 'Thanksgiving - Immediate 3'},
+    {'date': '2025-12-10', 'regions': ["SE"], 'comment': 'Thanksgiving - Immediate 3'},
+    {'date': '2025-12-11', 'regions': ["SE"], 'comment': 'Thanksgiving - Immediate 3'},
+    {'date': '2025-12-12', 'regions': ["SE"], 'comment': 'Thanksgiving - Immediate 3'},
+    {'date': '2025-12-13', 'regions': ["SE"], 'comment': 'Thanksgiving - Immediate 3'},
 ]
 
 
@@ -143,9 +147,15 @@ PLATTER_INCLUSIONS = [
     # Example configuration:
     {
         'region': 'BA',
-        'start_date': '2025-12-04',
-        'end_date': '2025-12-31',
-        'items': None  # None means all platters, or specify [item_no1, item_no2, ...]
+        'start_date': '2025-12-11',
+        'end_date': '2025-12-14',
+        'items': [1965631]  # None means all platters, or specify [item_no1, item_no2, ...]
+    },
+    {
+        'region': 'BA',
+        'start_date': '2025-12-18',
+        'end_date': '2025-12-21',
+        'items': [1965631]  # None means all platters, or specify [item_no1, item_no2, ...]
     },
 ]
 

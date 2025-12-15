@@ -193,13 +193,14 @@ def apply_safety_stock_buffer(row: dict, case_pack_size: int,
         w1_sold < w4_sold
     )
     
-    if should_apply and round_up_final < safety_stock:
-        row['forecast_safety_stock_applied'] = case_pack_size
-        row['safety_stock_qty'] = case_pack_size  # Track for waterfall
-        row['forecast_quantity'] += case_pack_size
-    else:
-        row['forecast_safety_stock_applied'] = 0
-        row['safety_stock_qty'] = 0.0  # Track for waterfall
+    # if should_apply and round_up_final < safety_stock:
+    #     row['forecast_safety_stock_applied'] = case_pack_size
+    #     row['safety_stock_qty'] = case_pack_size  # Track for waterfall
+    #     row['forecast_quantity'] += case_pack_size
+    # else:
+    # DISABLING SAFETY STOCK CALCULATION.
+    row['forecast_safety_stock_applied'] = 0
+    row['safety_stock_qty'] = 0.0  # Track for waterfall
     
     return row
 
@@ -223,6 +224,8 @@ def apply_effective_cover_guardrail(row: dict, base_cover_sold_out: float) -> di
     w1_shrink = row.get('w1_shrink_p')
     case_pack_size = row.get('case_pack_size', 6)
     
+    # Note: guardrail_adj_qty and guardrail_applied are pre-initialized in apply_all_rounding
+    
     if forecast_avg <= 0:
         return row
     
@@ -233,6 +236,9 @@ def apply_effective_cover_guardrail(row: dict, base_cover_sold_out: float) -> di
         if effective_cover > (1 + base_cover_sold_out) and (forecast_qty / case_pack_size) > 2:
             target_qty = math.ceil(forecast_avg * (1 + base_cover_sold_out) / case_pack_size) * case_pack_size
             if target_qty < forecast_qty:
+                # Track the guardrail reduction
+                row['guardrail_adj_qty'] = target_qty - forecast_qty  # Negative value
+                row['guardrail_applied'] = 1
                 row['forecast_quantity'] = target_qty
     
     return row
@@ -339,6 +345,10 @@ def apply_all_rounding(row: dict, params: dict) -> dict:
     
     # Apply safety stock
     row = apply_safety_stock_buffer(row, case_pack_size)
+    
+    # Initialize guardrail tracking columns (always)
+    row['guardrail_adj_qty'] = 0.0
+    row['guardrail_applied'] = 0
     
     # Apply guardrails (SKIPPED for sold-out items to promote their forecast)
     if not was_sold_out:

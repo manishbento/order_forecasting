@@ -189,6 +189,7 @@ def calculate_base_forecast(row: dict, weights: Tuple[float, float, float, float
     row['baseline_adj_qty'] = 0.0
     row['ema_uplift_applied'] = 0
     row['ema_uplift_qty'] = 0.0
+    row['baseline_uplift_qty'] = 0.0  # Tracks change from w1_sold to baseline (for all sources)
     
     # Determine base forecast (max of recent week and EMA)
     # This prevents over-correction when recent sales are strong
@@ -199,6 +200,7 @@ def calculate_base_forecast(row: dict, weights: Tuple[float, float, float, float
         row['baseline_qty'] = w1_sold
         row['ema_uplift_applied'] = 0
         row['ema_uplift_qty'] = 0.0
+        row['baseline_uplift_qty'] = 0.0  # No change from w1_sold
     else:
         # LW sales below trend - uplift to EMA
         row['forecast_average'] = ema
@@ -206,6 +208,7 @@ def calculate_base_forecast(row: dict, weights: Tuple[float, float, float, float
         row['baseline_qty'] = ema
         row['ema_uplift_applied'] = 1
         row['ema_uplift_qty'] = ema - w1_sold  # Positive value showing uplift amount
+        row['baseline_uplift_qty'] = ema - w1_sold  # Same as ema_uplift for EMA case
     
     # Special case: if no shipments last week, use average/EMA
     if row.get('w1_shipped') is None or row.get('w1_shipped') == 0:
@@ -213,10 +216,12 @@ def calculate_base_forecast(row: dict, weights: Tuple[float, float, float, float
             row['forecast_average'] = average_sold
             row['baseline_source'] = 'average'
             row['baseline_qty'] = average_sold
+            row['baseline_uplift_qty'] = average_sold - w1_sold  # Track uplift from w1_sold (usually 0)
         else:
             row['forecast_average'] = ema
             row['baseline_source'] = 'ema'
             row['baseline_qty'] = ema
+            row['baseline_uplift_qty'] = ema - w1_sold
         row['ema_uplift_applied'] = 0
         row['ema_uplift_qty'] = 0.0
 
@@ -228,10 +233,12 @@ def calculate_base_forecast(row: dict, weights: Tuple[float, float, float, float
             row['forecast_average'] = ema
             row['baseline_source'] = 'ema'
             row['baseline_qty'] = ema
+            row['baseline_uplift_qty'] = ema - w1_sold
         else:
             row['forecast_average'] = 1.0
             row['baseline_source'] = 'minimum_case'
             row['baseline_qty'] = 1.0
+            row['baseline_uplift_qty'] = 1.0 - w1_sold  # Track uplift from w1_sold (usually 0)
         row['ema_uplift_applied'] = 0
         row['ema_uplift_qty'] = 0.0
     

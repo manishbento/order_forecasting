@@ -54,36 +54,46 @@ DB_PATH = os.path.join(settings.DATA_STORE_DIR, "weather.db")
 
 # Weather severity thresholds
 WEATHER_THRESHOLDS = {
-    # Rain thresholds (inches)
-    'rain_light': 0.1,        # Light rain
-    'rain_moderate': 0.25,    # Moderate rain
-    'rain_heavy': 0.5,        # Heavy rain
-    'rain_extreme': 1.0,      # Extreme rain
+    # Rain thresholds (inches) - actual precipitation amount
+    'rain_trace': 0.05,       # Trace rain - barely noticeable
+    'rain_light': 0.1,        # Light rain - minor inconvenience
+    'rain_moderate': 0.25,    # Moderate rain - noticeable, some avoid trips
+    'rain_heavy': 0.5,        # Heavy rain - difficult conditions
+    'rain_extreme': 1.0,      # Extreme rain - flooding risk
     
-    # Snow thresholds (inches)
-    'snow_light': 1.0,        # Light snow
-    'snow_moderate': 3.0,     # Moderate snow
-    'snow_heavy': 6.0,        # Heavy snow
+    # Snow thresholds (inches) - NEW snowfall
+    'snow_trace': 0.5,        # Trace snow - barely accumulates
+    'snow_light': 1.0,        # Light snow - some accumulation
+    'snow_moderate': 3.0,     # Moderate snow - road treatment needed
+    'snow_heavy': 6.0,        # Heavy snow - significant travel impact
     'snow_extreme': 12.0,     # Blizzard conditions
     
-    # Wind thresholds (mph)
-    'wind_breezy': 15,        # Breezy
-    'wind_windy': 25,         # Windy
-    'wind_high': 40,          # High winds
-    'wind_extreme': 58,       # Storm force
+    # Snow depth thresholds (inches) - EXISTING accumulation on ground
+    'depth_minimal': 2.0,     # Minimal - roads likely clear
+    'depth_light': 4.0,       # Light - some roads may be slick
+    'depth_moderate': 8.0,    # Moderate - parking lots may be bad
+    'depth_heavy': 12.0,      # Heavy - travel hazardous
     
-    # Temperature thresholds (Fahrenheit)
-    'temp_cold': 32,          # Freezing
-    'temp_very_cold': 20,     # Very cold
-    'temp_extreme_cold': 0,   # Extreme cold
-    'temp_hot': 90,           # Hot
-    'temp_very_hot': 100,     # Very hot
-    'temp_extreme_hot': 110,  # Extreme heat
+    # Wind thresholds (mph)
+    'wind_calm': 10,          # Calm
+    'wind_breezy': 15,        # Breezy - noticeable but fine
+    'wind_windy': 25,         # Windy - carts, doors difficult
+    'wind_high': 40,          # High winds - dangerous with precip
+    'wind_extreme': 58,       # Storm force - stay home
+    
+    # Temperature thresholds (Fahrenheit) - only extremes matter
+    'temp_cold': 32,          # Freezing - ice possible with precip
+    'temp_very_cold': 15,     # Very cold - unpleasant outdoors
+    'temp_extreme_cold': 0,   # Extreme cold - dangerous exposure
+    'temp_hot': 95,           # Hot - normal summer day
+    'temp_very_hot': 100,     # Very hot - heat advisory
+    'temp_extreme_hot': 110,  # Extreme heat - dangerous
     
     # Visibility thresholds (miles)
-    'visibility_reduced': 5,  # Reduced visibility
-    'visibility_low': 1,      # Low visibility
-    'visibility_poor': 0.25,  # Poor visibility (fog)
+    'visibility_clear': 10,   # Clear visibility
+    'visibility_reduced': 5,  # Reduced visibility - noticeable
+    'visibility_low': 1,      # Low visibility - driving difficult
+    'visibility_poor': 0.25,  # Poor visibility - fog/blizzard
 }
 
 # Condition keywords that impact severity
@@ -134,45 +144,72 @@ def calculate_rain_severity(precip: float, precip_prob: float) -> float:
     """
     Calculate rain severity score (0-10 scale).
     
+    Rain prevents shopping when it's heavy enough to:
+    - Make driving unpleasant/dangerous
+    - Make loading groceries miserable
+    - Flood parking lots
+    
     Args:
-        precip: Precipitation amount in inches
+        precip: Precipitation amount in inches (expected total for day)
         precip_prob: Precipitation probability (0-100)
         
     Returns:
         Rain severity score (0-10)
     """
-    if precip <= 0 or precip_prob <= 0:
+    if precip <= 0:
         return 0.0
     
-    # Adjust precip by probability (weighted expected value)
-    prob_factor = precip_prob / 100.0
+    # Weight precipitation by probability
+    # Example: 0.5" rain with 60% probability = 0.3" effective
+    prob_factor = min(1.0, precip_prob / 100.0) if precip_prob > 0 else 0.5
     effective_precip = precip * prob_factor
     
-    # Calculate base severity from amount
-    if effective_precip >= WEATHER_THRESHOLDS['rain_extreme']:
-        base_severity = 10.0
-    elif effective_precip >= WEATHER_THRESHOLDS['rain_heavy']:
-        base_severity = 7.0 + 3.0 * (effective_precip - WEATHER_THRESHOLDS['rain_heavy']) / (WEATHER_THRESHOLDS['rain_extreme'] - WEATHER_THRESHOLDS['rain_heavy'])
-    elif effective_precip >= WEATHER_THRESHOLDS['rain_moderate']:
-        base_severity = 4.0 + 3.0 * (effective_precip - WEATHER_THRESHOLDS['rain_moderate']) / (WEATHER_THRESHOLDS['rain_heavy'] - WEATHER_THRESHOLDS['rain_moderate'])
-    elif effective_precip >= WEATHER_THRESHOLDS['rain_light']:
-        base_severity = 2.0 + 2.0 * (effective_precip - WEATHER_THRESHOLDS['rain_light']) / (WEATHER_THRESHOLDS['rain_moderate'] - WEATHER_THRESHOLDS['rain_light'])
-    else:
-        base_severity = 2.0 * effective_precip / WEATHER_THRESHOLDS['rain_light']
+    # No impact if trace amounts
+    if effective_precip < WEATHER_THRESHOLDS['rain_trace']:
+        return 0.0
     
-    return min(10.0, base_severity)
+    # Calculate severity based on effective precipitation
+    # Using continuous scale for smoother transitions
+    if effective_precip >= WEATHER_THRESHOLDS['rain_extreme']:
+        # Extreme: 8-10
+        excess = effective_precip - WEATHER_THRESHOLDS['rain_extreme']
+        return min(10.0, 8.0 + min(2.0, excess * 2.0))
+    elif effective_precip >= WEATHER_THRESHOLDS['rain_heavy']:
+        # Heavy: 6-8
+        range_size = WEATHER_THRESHOLDS['rain_extreme'] - WEATHER_THRESHOLDS['rain_heavy']
+        progress = (effective_precip - WEATHER_THRESHOLDS['rain_heavy']) / range_size
+        return 6.0 + 2.0 * progress
+    elif effective_precip >= WEATHER_THRESHOLDS['rain_moderate']:
+        # Moderate: 4-6
+        range_size = WEATHER_THRESHOLDS['rain_heavy'] - WEATHER_THRESHOLDS['rain_moderate']
+        progress = (effective_precip - WEATHER_THRESHOLDS['rain_moderate']) / range_size
+        return 4.0 + 2.0 * progress
+    elif effective_precip >= WEATHER_THRESHOLDS['rain_light']:
+        # Light: 2-4
+        range_size = WEATHER_THRESHOLDS['rain_moderate'] - WEATHER_THRESHOLDS['rain_light']
+        progress = (effective_precip - WEATHER_THRESHOLDS['rain_light']) / range_size
+        return 2.0 + 2.0 * progress
+    else:
+        # Trace to Light: 0-2
+        range_size = WEATHER_THRESHOLDS['rain_light'] - WEATHER_THRESHOLDS['rain_trace']
+        progress = (effective_precip - WEATHER_THRESHOLDS['rain_trace']) / range_size
+        return 0.0 + 2.0 * progress
 
 
 def calculate_snow_severity(snow: float, snow_depth: float = 0) -> float:
     """
     Calculate snow severity score (0-10 scale).
     
-    Snow depth (accumulation on ground) is a critical factor for travel conditions.
-    Existing snow depth makes roads dangerous even without new snow.
+    Snow impacts shopping through:
+    1. NEW SNOWFALL: Active snow makes driving dangerous, visibility poor
+    2. EXISTING SNOW DEPTH: Roads/lots may be icy, not fully cleared
+    
+    Both factors contribute - a day with 2" new snow on top of 8" existing
+    is much worse than 2" on bare ground.
     
     Args:
-        snow: Snowfall amount in inches (new snow)
-        snow_depth: Existing snow depth in inches (accumulation)
+        snow: New snowfall amount in inches (forecast for day)
+        snow_depth: Existing snow depth in inches (accumulation on ground)
         
     Returns:
         Snow severity score (0-10)
@@ -180,66 +217,149 @@ def calculate_snow_severity(snow: float, snow_depth: float = 0) -> float:
     if snow <= 0 and snow_depth <= 0:
         return 0.0
     
-    # New snow has higher impact - directly affects travel during the day
-    new_snow_impact = snow
+    # ==========================================================================
+    # PART 1: NEW SNOWFALL SEVERITY (0-8)
+    # Active snow falling has high impact - visibility, accumulation, slippery
+    # ==========================================================================
+    new_snow_severity = 0.0
     
-    # Existing snow depth also impacts travel - especially above 4 inches
-    # Roads may be icy, parking lots not cleared, sidewalks dangerous
-    if snow_depth >= 12:
-        depth_impact = 4.0  # Major accumulation - significant travel hazard
-    elif snow_depth >= 8:
-        depth_impact = 3.0  # Heavy accumulation
-    elif snow_depth >= 4:
-        depth_impact = 2.0  # Moderate accumulation
-    elif snow_depth >= 2:
-        depth_impact = 1.0  # Light accumulation
-    else:
-        depth_impact = snow_depth * 0.5  # Minimal accumulation
+    if snow > 0:
+        if snow >= WEATHER_THRESHOLDS['snow_extreme']:
+            # Blizzard: 8+
+            new_snow_severity = 8.0
+        elif snow >= WEATHER_THRESHOLDS['snow_heavy']:
+            # Heavy: 6-8
+            range_size = WEATHER_THRESHOLDS['snow_extreme'] - WEATHER_THRESHOLDS['snow_heavy']
+            progress = (snow - WEATHER_THRESHOLDS['snow_heavy']) / range_size
+            new_snow_severity = 6.0 + 2.0 * progress
+        elif snow >= WEATHER_THRESHOLDS['snow_moderate']:
+            # Moderate: 4-6
+            range_size = WEATHER_THRESHOLDS['snow_heavy'] - WEATHER_THRESHOLDS['snow_moderate']
+            progress = (snow - WEATHER_THRESHOLDS['snow_moderate']) / range_size
+            new_snow_severity = 4.0 + 2.0 * progress
+        elif snow >= WEATHER_THRESHOLDS['snow_light']:
+            # Light: 2-4
+            range_size = WEATHER_THRESHOLDS['snow_moderate'] - WEATHER_THRESHOLDS['snow_light']
+            progress = (snow - WEATHER_THRESHOLDS['snow_light']) / range_size
+            new_snow_severity = 2.0 + 2.0 * progress
+        elif snow >= WEATHER_THRESHOLDS['snow_trace']:
+            # Trace: 0.5-2
+            range_size = WEATHER_THRESHOLDS['snow_light'] - WEATHER_THRESHOLDS['snow_trace']
+            progress = (snow - WEATHER_THRESHOLDS['snow_trace']) / range_size
+            new_snow_severity = 0.5 + 1.5 * progress
+        else:
+            # Dusting: 0-0.5
+            new_snow_severity = snow / WEATHER_THRESHOLDS['snow_trace'] * 0.5
     
-    # Combined impact - new snow is weighted more heavily
-    total_impact = new_snow_impact + depth_impact
+    # ==========================================================================
+    # PART 2: EXISTING SNOW DEPTH BONUS (0-5)
+    # Ground accumulation affects travel even without new snow
+    # - Roads may be icy from melt/refreeze
+    # - Parking lots may not be fully cleared
+    # - Sidewalks hazardous
+    # ==========================================================================
+    depth_bonus = 0.0
     
-    if total_impact >= WEATHER_THRESHOLDS['snow_extreme']:
-        return 10.0
-    elif total_impact >= WEATHER_THRESHOLDS['snow_heavy']:
-        return 7.0 + 3.0 * (total_impact - WEATHER_THRESHOLDS['snow_heavy']) / (WEATHER_THRESHOLDS['snow_extreme'] - WEATHER_THRESHOLDS['snow_heavy'])
-    elif total_impact >= WEATHER_THRESHOLDS['snow_moderate']:
-        return 4.0 + 3.0 * (total_impact - WEATHER_THRESHOLDS['snow_moderate']) / (WEATHER_THRESHOLDS['snow_heavy'] - WEATHER_THRESHOLDS['snow_moderate'])
-    elif total_impact >= WEATHER_THRESHOLDS['snow_light']:
-        return 2.0 + 2.0 * (total_impact - WEATHER_THRESHOLDS['snow_light']) / (WEATHER_THRESHOLDS['snow_moderate'] - WEATHER_THRESHOLDS['snow_light'])
-    else:
-        return 2.0 * total_impact / WEATHER_THRESHOLDS['snow_light']
+    if snow_depth > 0:
+        if snow_depth >= WEATHER_THRESHOLDS['depth_heavy']:
+            # 12"+ on ground: +4-5 (travel definitely hazardous)
+            excess = snow_depth - WEATHER_THRESHOLDS['depth_heavy']
+            depth_bonus = 4.0 + min(1.0, excess / 6.0)  # Caps at +5
+        elif snow_depth >= WEATHER_THRESHOLDS['depth_moderate']:
+            # 8-12" on ground: +3-4 (significant accumulation)
+            range_size = WEATHER_THRESHOLDS['depth_heavy'] - WEATHER_THRESHOLDS['depth_moderate']
+            progress = (snow_depth - WEATHER_THRESHOLDS['depth_moderate']) / range_size
+            depth_bonus = 3.0 + 1.0 * progress
+        elif snow_depth >= WEATHER_THRESHOLDS['depth_light']:
+            # 4-8" on ground: +2-3 (roads may be slick)
+            range_size = WEATHER_THRESHOLDS['depth_moderate'] - WEATHER_THRESHOLDS['depth_light']
+            progress = (snow_depth - WEATHER_THRESHOLDS['depth_light']) / range_size
+            depth_bonus = 2.0 + 1.0 * progress
+        elif snow_depth >= WEATHER_THRESHOLDS['depth_minimal']:
+            # 2-4" on ground: +1-2 (some impact)
+            range_size = WEATHER_THRESHOLDS['depth_light'] - WEATHER_THRESHOLDS['depth_minimal']
+            progress = (snow_depth - WEATHER_THRESHOLDS['depth_minimal']) / range_size
+            depth_bonus = 1.0 + 1.0 * progress
+        else:
+            # <2" on ground: +0-1 (minimal impact)
+            depth_bonus = snow_depth / WEATHER_THRESHOLDS['depth_minimal']
+    
+    # ==========================================================================
+    # COMBINE: New snow severity + Depth bonus, capped at 10
+    # ==========================================================================
+    total_severity = new_snow_severity + depth_bonus
+    
+    # Special case: No new snow but significant depth still impacts travel
+    if snow <= 0 and snow_depth > 0:
+        # Existing depth alone can create moderate severity (ice, uncleared lots)
+        total_severity = depth_bonus * 1.5  # Amplify depth impact when sole factor
+    
+    return min(10.0, total_severity)
 
 
 def calculate_wind_severity(wind_speed: float, wind_gust: float = None) -> float:
     """
     Calculate wind severity score (0-10 scale).
     
+    Wind impacts shopping through:
+    - Difficulty controlling shopping carts
+    - Doors hard to manage (especially for elderly)
+    - Walking to/from store unpleasant
+    - Combined with rain/snow: driving conditions worsen
+    - Extreme: downed trees, power outages
+    
     Args:
         wind_speed: Sustained wind speed in mph
-        wind_gust: Wind gust speed in mph
+        wind_gust: Wind gust speed in mph (optional)
         
     Returns:
         Wind severity score (0-10)
     """
-    # Use the higher of sustained or gust (weighted)
-    effective_wind = max(wind_speed, (wind_gust or 0) * 0.8)
+    if wind_speed <= 0:
+        return 0.0
     
+    # Use sustained speed, but consider gusts (gusts at 80% weight)
+    # Gusts are brief but can be dangerous
+    gust_contribution = (wind_gust * 0.8) if wind_gust and wind_gust > wind_speed else 0
+    effective_wind = max(wind_speed, gust_contribution)
+    
+    # Calm winds: no impact
+    if effective_wind < WEATHER_THRESHOLDS['wind_calm']:
+        return 0.0
+    
+    # Calculate severity
     if effective_wind >= WEATHER_THRESHOLDS['wind_extreme']:
-        return 10.0
+        # Storm force: 8-10 (dangerous conditions)
+        excess = effective_wind - WEATHER_THRESHOLDS['wind_extreme']
+        return min(10.0, 8.0 + min(2.0, excess / 15.0))
     elif effective_wind >= WEATHER_THRESHOLDS['wind_high']:
-        return 6.0 + 4.0 * (effective_wind - WEATHER_THRESHOLDS['wind_high']) / (WEATHER_THRESHOLDS['wind_extreme'] - WEATHER_THRESHOLDS['wind_high'])
+        # High winds: 6-8 (dangerous with precip, difficult outdoors)
+        range_size = WEATHER_THRESHOLDS['wind_extreme'] - WEATHER_THRESHOLDS['wind_high']
+        progress = (effective_wind - WEATHER_THRESHOLDS['wind_high']) / range_size
+        return 6.0 + 2.0 * progress
     elif effective_wind >= WEATHER_THRESHOLDS['wind_windy']:
-        return 3.0 + 3.0 * (effective_wind - WEATHER_THRESHOLDS['wind_windy']) / (WEATHER_THRESHOLDS['wind_high'] - WEATHER_THRESHOLDS['wind_windy'])
+        # Windy: 3-6 (carts difficult, unpleasant)
+        range_size = WEATHER_THRESHOLDS['wind_high'] - WEATHER_THRESHOLDS['wind_windy']
+        progress = (effective_wind - WEATHER_THRESHOLDS['wind_windy']) / range_size
+        return 3.0 + 3.0 * progress
     elif effective_wind >= WEATHER_THRESHOLDS['wind_breezy']:
-        return 1.0 + 2.0 * (effective_wind - WEATHER_THRESHOLDS['wind_breezy']) / (WEATHER_THRESHOLDS['wind_windy'] - WEATHER_THRESHOLDS['wind_breezy'])
+        # Breezy: 1-3 (noticeable but manageable)
+        range_size = WEATHER_THRESHOLDS['wind_windy'] - WEATHER_THRESHOLDS['wind_breezy']
+        progress = (effective_wind - WEATHER_THRESHOLDS['wind_breezy']) / range_size
+        return 1.0 + 2.0 * progress
     else:
-        return effective_wind / WEATHER_THRESHOLDS['wind_breezy']
+        # Calm to breezy: 0-1
+        range_size = WEATHER_THRESHOLDS['wind_breezy'] - WEATHER_THRESHOLDS['wind_calm']
+        progress = (effective_wind - WEATHER_THRESHOLDS['wind_calm']) / range_size
+        return 0.0 + 1.0 * progress
 
 
 def calculate_visibility_severity(visibility: float) -> float:
     """
     Calculate visibility severity score (0-10 scale).
+    
+    Poor visibility (fog, heavy snow, smoke) makes driving dangerous.
+    This primarily impacts willingness to travel, not shopping itself.
     
     Args:
         visibility: Visibility in miles
@@ -247,52 +367,97 @@ def calculate_visibility_severity(visibility: float) -> float:
     Returns:
         Visibility severity score (0-10)
     """
-    if visibility is None or visibility >= 10:
+    if visibility is None or visibility >= WEATHER_THRESHOLDS['visibility_clear']:
         return 0.0
     
     if visibility <= WEATHER_THRESHOLDS['visibility_poor']:
-        return 8.0 + 2.0 * (WEATHER_THRESHOLDS['visibility_poor'] - visibility) / WEATHER_THRESHOLDS['visibility_poor']
+        # Dense fog/blizzard: 8-10 (driving dangerous)
+        # Below 0.25 miles, can't see intersection ahead
+        return min(10.0, 8.0 + 2.0 * (WEATHER_THRESHOLDS['visibility_poor'] - visibility) / WEATHER_THRESHOLDS['visibility_poor'])
     elif visibility <= WEATHER_THRESHOLDS['visibility_low']:
-        return 5.0 + 3.0 * (WEATHER_THRESHOLDS['visibility_low'] - visibility) / (WEATHER_THRESHOLDS['visibility_low'] - WEATHER_THRESHOLDS['visibility_poor'])
+        # Low visibility: 5-8 (driving difficult)
+        range_size = WEATHER_THRESHOLDS['visibility_low'] - WEATHER_THRESHOLDS['visibility_poor']
+        progress = (WEATHER_THRESHOLDS['visibility_low'] - visibility) / range_size
+        return 5.0 + 3.0 * progress
     elif visibility <= WEATHER_THRESHOLDS['visibility_reduced']:
-        return 2.0 + 3.0 * (WEATHER_THRESHOLDS['visibility_reduced'] - visibility) / (WEATHER_THRESHOLDS['visibility_reduced'] - WEATHER_THRESHOLDS['visibility_low'])
+        # Reduced visibility: 2-5 (noticeable)
+        range_size = WEATHER_THRESHOLDS['visibility_reduced'] - WEATHER_THRESHOLDS['visibility_low']
+        progress = (WEATHER_THRESHOLDS['visibility_reduced'] - visibility) / range_size
+        return 2.0 + 3.0 * progress
     else:
-        return 2.0 * (10 - visibility) / (10 - WEATHER_THRESHOLDS['visibility_reduced'])
+        # Slightly reduced: 0-2
+        range_size = WEATHER_THRESHOLDS['visibility_clear'] - WEATHER_THRESHOLDS['visibility_reduced']
+        progress = (WEATHER_THRESHOLDS['visibility_clear'] - visibility) / range_size
+        return 0.0 + 2.0 * progress
 
 
 def calculate_temperature_severity(temp_max: float, temp_min: float) -> float:
     """
     Calculate temperature severity score (0-10 scale).
     
-    Both extreme heat and cold impact sales.
+    IMPORTANT: Temperature alone rarely prevents shopping.
+    - People shop in 20°F weather (dress warm, car heat)
+    - People shop in 95°F weather (car AC, store AC)
+    
+    Only EXTREME temperatures impact shopping behavior:
+    - Extreme cold (<0°F): Car won't start, frostbite risk
+    - Extreme heat (>105°F): Heat stroke risk, car unbearable
+    
+    Temperature DOES matter when combined with precipitation:
+    - Rain at 33°F = possible freezing rain (dangerous)
+    - Snow at 34°F = slushy mess, refreezes at night
+    
+    This function returns low severity for temperature alone.
+    The composite function handles temperature + precipitation interaction.
     
     Args:
         temp_max: Maximum temperature in Fahrenheit
         temp_min: Minimum temperature in Fahrenheit
         
     Returns:
-        Temperature severity score (0-10)
+        Temperature severity score (0-3, intentionally capped low)
     """
+    if temp_min is None and temp_max is None:
+        return 0.0
+    
+    temp_min = temp_min if temp_min is not None else 50
+    temp_max = temp_max if temp_max is not None else 70
+    
     cold_severity = 0.0
     heat_severity = 0.0
     
-    # Cold severity
+    # Cold severity (only extreme cold matters on its own)
     if temp_min <= WEATHER_THRESHOLDS['temp_extreme_cold']:
-        cold_severity = 8.0 + 2.0 * (WEATHER_THRESHOLDS['temp_extreme_cold'] - temp_min) / 20
+        # Below 0°F: dangerous cold
+        cold_severity = 2.0 + min(1.0, (WEATHER_THRESHOLDS['temp_extreme_cold'] - temp_min) / 20)
     elif temp_min <= WEATHER_THRESHOLDS['temp_very_cold']:
-        cold_severity = 5.0 + 3.0 * (WEATHER_THRESHOLDS['temp_very_cold'] - temp_min) / (WEATHER_THRESHOLDS['temp_very_cold'] - WEATHER_THRESHOLDS['temp_extreme_cold'])
+        # 0-15°F: very cold but manageable
+        range_size = WEATHER_THRESHOLDS['temp_very_cold'] - WEATHER_THRESHOLDS['temp_extreme_cold']
+        progress = (WEATHER_THRESHOLDS['temp_very_cold'] - temp_min) / range_size
+        cold_severity = 1.0 + 1.0 * progress
     elif temp_min <= WEATHER_THRESHOLDS['temp_cold']:
-        cold_severity = 2.0 + 3.0 * (WEATHER_THRESHOLDS['temp_cold'] - temp_min) / (WEATHER_THRESHOLDS['temp_cold'] - WEATHER_THRESHOLDS['temp_very_cold'])
+        # 15-32°F: cold but normal winter
+        range_size = WEATHER_THRESHOLDS['temp_cold'] - WEATHER_THRESHOLDS['temp_very_cold']
+        progress = (WEATHER_THRESHOLDS['temp_cold'] - temp_min) / range_size
+        cold_severity = 0.0 + 1.0 * progress
     
-    # Heat severity
+    # Heat severity (only extreme heat matters on its own)
     if temp_max >= WEATHER_THRESHOLDS['temp_extreme_hot']:
-        heat_severity = 8.0 + 2.0 * (temp_max - WEATHER_THRESHOLDS['temp_extreme_hot']) / 10
+        # Above 110°F: dangerous heat
+        heat_severity = 2.0 + min(1.0, (temp_max - WEATHER_THRESHOLDS['temp_extreme_hot']) / 10)
     elif temp_max >= WEATHER_THRESHOLDS['temp_very_hot']:
-        heat_severity = 5.0 + 3.0 * (temp_max - WEATHER_THRESHOLDS['temp_very_hot']) / (WEATHER_THRESHOLDS['temp_extreme_hot'] - WEATHER_THRESHOLDS['temp_very_hot'])
+        # 100-110°F: very hot but AC helps
+        range_size = WEATHER_THRESHOLDS['temp_extreme_hot'] - WEATHER_THRESHOLDS['temp_very_hot']
+        progress = (temp_max - WEATHER_THRESHOLDS['temp_very_hot']) / range_size
+        heat_severity = 1.0 + 1.0 * progress
     elif temp_max >= WEATHER_THRESHOLDS['temp_hot']:
-        heat_severity = 2.0 + 3.0 * (temp_max - WEATHER_THRESHOLDS['temp_hot']) / (WEATHER_THRESHOLDS['temp_very_hot'] - WEATHER_THRESHOLDS['temp_hot'])
+        # 95-100°F: hot but normal summer
+        range_size = WEATHER_THRESHOLDS['temp_very_hot'] - WEATHER_THRESHOLDS['temp_hot']
+        progress = (temp_max - WEATHER_THRESHOLDS['temp_hot']) / range_size
+        heat_severity = 0.0 + 1.0 * progress
     
-    return min(10.0, max(cold_severity, heat_severity))
+    # Return max of cold/heat, capped at 3 (temperature alone is minor factor)
+    return min(3.0, max(cold_severity, heat_severity))
 
 
 def calculate_condition_severity(conditions: str) -> float:
@@ -327,137 +492,173 @@ def calculate_composite_severity(
     condition_severity: float,
     severe_risk: float = 10,
     cloud_cover: float = 0,
-    precip_cover: float = 0
+    precip_cover: float = 0,
+    temp_min: float = None,
+    conditions: str = None
 ) -> tuple:
     """
-    Calculate composite weather severity score.
+    Calculate composite weather severity score (0-10).
     
-    BASED ONLY ON ACTUAL PRECIPITATION AMOUNTS (rain_severity, snow_severity).
+    This represents HOW LIKELY CUSTOMERS ARE TO STAY HOME due to weather.
     
-    NOT used:
-    - Temperature (people shop in cold/hot weather)
-    - Condition text keywords (misleading - may say "snow" with 0 accumulation)
+    PRIMARY FACTORS (what actually prevents shopping):
+    1. Precipitation amount (rain or snow) - driving/loading difficulty
+    2. Existing snow depth (in snow_severity) - travel hazards
+    3. Severe storm risk - dangerous conditions
+    4. Ice/freezing conditions - most dangerous road condition
     
-    Only factors that impact shopping:
-    1. rain_severity - calculated from actual rain amount in inches
-    2. snow_severity - calculated from actual snow amount in inches
-    3. severe_risk - API's storm risk score (thunderstorms, hail, tornadoes)
+    SECONDARY FACTORS (compound the primary):
+    - Wind with precipitation - driving rain/snow
+    - Poor visibility with precipitation - dangerous driving
+    - Precipitation duration/coverage - all-day vs brief
     
-    Secondary factors (only compound with significant precipitation):
-    - Wind + precipitation = worse driving conditions
-    - Poor visibility + precipitation = dangerous travel
-    
-    severerisk interpretation (from VisualCrossing docs):
-    - <30: Low risk of convective storms
-    - 30-70: Moderate risk
-    - >70: High risk (thunderstorms, hail, tornadoes)
+    NOT HEAVILY WEIGHTED:
+    - Temperature alone (people shop in cold/hot)
+    - Cloud cover (doesn't prevent shopping)
+    - Condition text keywords (can be misleading)
     
     Args:
-        rain_severity: Rain severity score (0-10) based on actual rain amount
-        snow_severity: Snow severity score (0-10) based on actual snow amount
+        rain_severity: Rain severity score (0-10)
+        snow_severity: Snow severity score (0-10), includes snow_depth impact
         wind_severity: Wind severity score (0-10)
         visibility_severity: Visibility severity score (0-10)
-        temp_severity: Temperature severity score (0-10) - NOT USED
-        condition_severity: Condition-based severity (0-5) - NOT USED
-        severe_risk: VisualCrossing severe risk score (0-100)
-        cloud_cover: Cloud cover percentage (0-100) - NOT USED
-        precip_cover: Proportion of hours with precipitation (0-100)
+        temp_severity: Temperature severity score (0-3, capped low)
+        condition_severity: Condition text severity (0-5)
+        severe_risk: VisualCrossing severe risk (0-100)
+        cloud_cover: Cloud cover percentage (0-100)
+        precip_cover: Hours with precipitation percentage (0-100)
+        temp_min: Minimum temperature (for ice detection)
+        conditions: Weather conditions text (for ice detection)
         
     Returns:
         Tuple of (composite_score, severity_category)
     """
-    # ========================================================================
-    # PRIMARY FACTOR: ACTUAL PRECIPITATION AMOUNTS ONLY
-    # rain_severity and snow_severity are calculated from real inches of precip
-    # ========================================================================
-    precip_severity = max(rain_severity, snow_severity)
+    # ==========================================================================
+    # STEP 1: BASE PRECIPITATION SEVERITY
+    # The primary driver - actual rain/snow amounts
+    # ==========================================================================
+    precip_severity = max(rain_severity or 0, snow_severity or 0)
     
-    # NOTE: We do NOT use condition_severity anymore - it's based on text keywords
-    # which can be misleading (e.g., "Snow, Rain" with 0 actual precipitation)
-    
-    # ========================================================================
-    # SEVERE RISK ASSESSMENT (from VisualCrossing API)
-    # This captures thunderstorms, hail, tornadoes - actual dangerous weather
+    # ==========================================================================
+    # STEP 2: SEVERE STORM RISK (from VisualCrossing API)
+    # Captures thunderstorms, hail, tornadoes - actual dangerous weather
     # Only applies if severe_risk is genuinely high (>=30)
-    # ========================================================================
+    # ==========================================================================
     severe_risk_severity = 0.0
-    if severe_risk is not None:
+    if severe_risk is not None and severe_risk > 0:
         if severe_risk >= 70:
-            # High risk - dangerous storms possible
-            severe_risk_severity = 8.0 + (severe_risk - 70) / 30 * 2  # 8-10
+            # High risk - dangerous storms expected
+            severe_risk_severity = 8.0 + min(2.0, (severe_risk - 70) / 15)
         elif severe_risk >= 50:
             # Moderate-high risk
-            severe_risk_severity = 5.0 + (severe_risk - 50) / 20 * 3  # 5-8
+            severe_risk_severity = 5.0 + 3.0 * (severe_risk - 50) / 20
         elif severe_risk >= 30:
             # Moderate risk
-            severe_risk_severity = 2.0 + (severe_risk - 30) / 20 * 3  # 2-5
-        # Below 30 = no significant storm risk, don't add to severity
+            severe_risk_severity = 2.0 + 3.0 * (severe_risk - 30) / 20
+        # Below 30 = low storm risk, no additional severity
     
-    # ========================================================================
-    # BASE SCORE CALCULATION
-    # Based ONLY on actual precipitation amounts and severe storm risk
-    # ========================================================================
+    # ==========================================================================
+    # STEP 3: ICE/FREEZING CONDITIONS CHECK
+    # This is the MOST DANGEROUS road condition
+    # Rain or drizzle near freezing can create black ice
+    # ==========================================================================
+    ice_severity = 0.0
+    has_ice_conditions = False
+    
+    # Check for explicit ice/freezing rain in conditions
+    if conditions:
+        conditions_lower = conditions.lower()
+        if any(ice_word in conditions_lower for ice_word in ['ice', 'freezing rain', 'sleet', 'glaze']):
+            has_ice_conditions = True
+            ice_severity = 7.0  # Ice is inherently dangerous
+    
+    # Check for rain near freezing (potential black ice)
+    if rain_severity and rain_severity > 0 and temp_min is not None:
+        if temp_min <= 34 and temp_min >= 28:
+            # Temperature where rain could freeze on contact
+            has_ice_conditions = True
+            ice_severity = max(ice_severity, 5.0 + rain_severity * 0.3)
+    
+    # ==========================================================================
+    # STEP 4: BASE SCORE CALCULATION
+    # Maximum of precipitation, storm risk, and ice conditions
+    # ==========================================================================
     base_score = max(
-        precip_severity,           # Rain or snow amount (actual inches)
-        severe_risk_severity       # Storm risk from API (only if >= 30)
+        precip_severity,           # Rain or snow amount
+        severe_risk_severity,      # Storm risk from API
+        ice_severity               # Ice/freezing conditions
     )
     
-    # ========================================================================
-    # COMPOUNDING EFFECTS
-    # Only apply when there IS significant precipitation (>= 2.0 severity)
-    # ========================================================================
+    # ==========================================================================
+    # STEP 5: COMPOUNDING EFFECTS
+    # Only apply when there IS significant base weather (>= 2.0)
+    # ==========================================================================
     compounding_bonus = 0.0
     
-    if precip_severity >= 2:
-        # Precipitation + wind = driving rain/snow, worse conditions
-        if wind_severity >= 2:
-            compounding_bonus += min(1.5, wind_severity * 0.25)
+    if base_score >= 2:
+        # Wind makes precipitation worse (driving rain/snow)
+        if wind_severity and wind_severity >= 3:
+            compounding_bonus += min(1.5, wind_severity * 0.3)
         
-        # Precipitation + poor visibility = dangerous driving
-        if visibility_severity >= 2:
-            compounding_bonus += min(1.5, visibility_severity * 0.25)
+        # Poor visibility with precipitation is dangerous
+        if visibility_severity and visibility_severity >= 3:
+            compounding_bonus += min(1.5, visibility_severity * 0.3)
         
-        # Snow is inherently more impactful than rain (travel hazard, accumulation)
-        if snow_severity > rain_severity:
-            compounding_bonus += min(2.0, snow_severity * 0.25)
+        # Snow inherently worse than rain (accumulation, slippery roads)
+        if snow_severity and snow_severity > (rain_severity or 0):
+            compounding_bonus += min(1.0, snow_severity * 0.15)
         
-        # Severe weather risk compounds with existing precipitation
+        # Ice conditions get extra bonus (worst road condition)
+        if has_ice_conditions:
+            compounding_bonus += 1.5
+        
+        # Severe weather risk compounds with existing conditions
         if severe_risk_severity >= 3:
-            compounding_bonus += min(1.5, severe_risk_severity * 0.2)
+            compounding_bonus += min(1.0, severe_risk_severity * 0.15)
     
-    # ========================================================================
-    # DURATION/COVERAGE FACTORS
-    # All-day rain/snow is worse than brief shower
-    # Only applies if there's actual precipitation
-    # ========================================================================
+    # ==========================================================================
+    # STEP 6: DURATION/COVERAGE FACTOR
+    # All-day precipitation worse than brief shower
+    # ==========================================================================
     if precip_cover is not None and precip_cover > 0 and precip_severity >= 1:
         if precip_cover >= 75:
-            # Most of day has precipitation - significant impact
-            compounding_bonus += min(1.5, precip_severity * 0.20)
-        elif precip_cover >= 50:
+            # Most of day has precipitation - sustained impact
             compounding_bonus += min(1.0, precip_severity * 0.15)
+        elif precip_cover >= 50:
+            compounding_bonus += min(0.7, precip_severity * 0.10)
         elif precip_cover >= 25:
-            compounding_bonus += min(0.5, precip_severity * 0.10)
+            compounding_bonus += min(0.4, precip_severity * 0.06)
     
-    # ========================================================================
-    # CALCULATE FINAL COMPOSITE
-    # ========================================================================
+    # ==========================================================================
+    # STEP 7: VISIBILITY STANDALONE (fog can prevent shopping alone)
+    # Dense fog without precipitation is still dangerous
+    # ==========================================================================
+    if visibility_severity and visibility_severity >= 6 and base_score < visibility_severity:
+        # Dense fog (visibility < 0.5 miles) can be primary factor
+        base_score = max(base_score, visibility_severity * 0.8)
+    
+    # ==========================================================================
+    # STEP 8: CALCULATE FINAL COMPOSITE
+    # ==========================================================================
     composite_score = base_score + compounding_bonus
     
     # Cap at 10
     composite_score = min(10.0, max(0.0, composite_score))
     
-    # Determine category with adjusted thresholds
-    if composite_score >= 7:
-        category = 'SEVERE'
-    elif composite_score >= 5:
-        category = 'HIGH'
-    elif composite_score >= 3:
-        category = 'MODERATE'
-    elif composite_score >= 1.5:
-        category = 'LOW'
+    # ==========================================================================
+    # STEP 9: DETERMINE CATEGORY
+    # Based on expected customer behavior
+    # ==========================================================================
+    if composite_score >= 8:
+        category = 'SEVERE'      # Most stay home
+    elif composite_score >= 6:
+        category = 'HIGH'        # Only essential trips
+    elif composite_score >= 4:
+        category = 'MODERATE'    # Many avoid unnecessary trips
+    elif composite_score >= 2:
+        category = 'LOW'         # Some may delay trips
     else:
-        category = 'MINIMAL'
+        category = 'MINIMAL'     # Normal shopping behavior
     
     return round(composite_score, 2), category
 
@@ -466,35 +667,43 @@ def calculate_sales_impact_factor(severity_score: float, severity_category: str)
     """
     Convert severity score to a sales impact factor (multiplier).
     
-    This factor is used to adjust forecasted quantities:
-    - Factor of 1.0 = no adjustment
-    - Factor < 1.0 = reduce forecast (bad weather expected)
+    This factor represents expected sales as a proportion of normal:
+    - Factor of 1.0 = 100% normal sales (no weather impact)
+    - Factor of 0.8 = 80% normal sales (20% reduction expected)
     
-    The relationship is non-linear - moderate weather has small impact,
-    but severe weather has progressively larger impact.
+    Based on severity categories:
+    - MINIMAL (0-2): No significant impact
+    - LOW (2-4): Some customers delay trips, 3-7% reduction
+    - MODERATE (4-6): Many avoid unnecessary trips, 7-15% reduction
+    - HIGH (6-8): Only essential trips, 15-30% reduction
+    - SEVERE (8-10): Most stay home, 30-50% reduction
     
     Args:
         severity_score: Composite severity score (0-10)
         severity_category: Severity category string
         
     Returns:
-        Sales impact factor (0.5 - 1.0)
+        Sales impact factor (0.50 - 1.00)
     """
-    if severity_score <= 2:
-        # Minimal weather - no impact
-        return 1.0
-    elif severity_score <= 4:
-        # Low weather - slight impact (up to 5% reduction)
-        return 1.0 - (severity_score - 2) * 0.025
-    elif severity_score <= 6:
-        # Moderate weather - moderate impact (5-15% reduction)
-        return 0.95 - (severity_score - 4) * 0.05
-    elif severity_score <= 8:
-        # High weather - significant impact (15-30% reduction)
-        return 0.85 - (severity_score - 6) * 0.075
+    if severity_score < 2:
+        # MINIMAL: No meaningful impact
+        return 1.00
+    elif severity_score < 4:
+        # LOW: 3-7% reduction (linear interpolation)
+        # severity 2 → 0.97, severity 4 → 0.93
+        return 1.00 - (severity_score - 2) * 0.02
+    elif severity_score < 6:
+        # MODERATE: 7-15% reduction
+        # severity 4 → 0.93, severity 6 → 0.85
+        return 0.96 - (severity_score - 4) * 0.04
+    elif severity_score < 8:
+        # HIGH: 15-30% reduction  
+        # severity 6 → 0.85, severity 8 → 0.70
+        return 0.88 - (severity_score - 6) * 0.075
     else:
-        # Severe weather - major impact (30-50% reduction)
-        return 0.70 - (severity_score - 8) * 0.10
+        # SEVERE: 30-50% reduction
+        # severity 8 → 0.70, severity 10 → 0.50
+        return 0.73 - (severity_score - 8) * 0.10
 
 
 
@@ -790,10 +999,12 @@ def process_weather_files(db_path: str = None, force_purge: bool = False):
                 condition_severity = calculate_condition_severity(conditions)
                 
                 # Calculate composite severity with all factors
+                # Pass temp_min and conditions for ice detection
                 severity_score, severity_category = calculate_composite_severity(
                     rain_severity, snow_severity, wind_severity,
                     visibility_severity, temp_severity, condition_severity,
-                    severe_risk, cloud_cover, precip_cover
+                    severe_risk, cloud_cover, precip_cover,
+                    temp_min=temp_min, conditions=conditions
                 )
                 
                 # Calculate sales impact factor
