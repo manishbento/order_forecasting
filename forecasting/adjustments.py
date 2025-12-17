@@ -120,6 +120,14 @@ ADJUSTMENTS = [
         'end_date': datetime(2025, 12, 21),
         'multiplier': 0.87
     },
+    {
+        'type': AdjustmentType.CANNIBALISM,
+        'name': 'BA_Platter_Cannibalism_CHRISTMAS',
+        'regions': ['BA', 'LA', 'SD'],
+        'start_date': datetime(2025, 12, 22),
+        'end_date': datetime(2025, 12, 24),
+        'multiplier': 0.87
+    },
     
     # ========== ADHOC INCREASE ADJUSTMENTS ==========
     # Example: Store-specific temporary increase for high-volume stores

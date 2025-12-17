@@ -33,8 +33,8 @@ CONFIG_FILE_PATH = os.path.join(BASE_DIR, "config_files", "Configuration.xlsx")
 # FORECAST DATE RANGE
 # =============================================================================
 # These define the date range for which forecasts will be generated
-FORECAST_START_DATE_V = datetime(2025, 12, 18)
-FORECAST_END_DATE_V = datetime(2025, 12, 21)
+FORECAST_START_DATE_V = datetime(2025, 12, 22)
+FORECAST_END_DATE_V = datetime(2025, 12, 23)
 
 # String versions for SQL queries
 FORECAST_START_DATE = FORECAST_START_DATE_V.strftime('%Y-%m-%d')
@@ -91,6 +91,8 @@ EXCEPTIONAL_DAYS = [
     {'date': '2025-12-11', 'regions': ["SE"], 'comment': 'Thanksgiving - Immediate 3'},
     {'date': '2025-12-12', 'regions': ["SE"], 'comment': 'Thanksgiving - Immediate 3'},
     {'date': '2025-12-13', 'regions': ["SE"], 'comment': 'Thanksgiving - Immediate 3'},
+    {'date': '2025-12-14', 'regions': ["NE", "TE", "MW"], 'comment': 'Thanksgiving - Immediate 3'},
+    {'date': '2025-12-15', 'regions': ["NE", "TE", "MW"], 'comment': 'Thanksgiving - Immediate 3'},
 ]
 
 
